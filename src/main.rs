@@ -32,6 +32,9 @@ enum Commands {
         /// Add a one-off requirement: cmd:NAME, cmd:NAME@VERSION, or env:NAME
         #[arg(long = "require", value_name = "REQUIREMENT")]
         requirements: Vec<String>,
+        /// Add a reusable built-in requirement profile (also reads LOADOUT_PROFILE)
+        #[arg(long, value_enum, value_delimiter = ',', env = "LOADOUT_PROFILE")]
+        profile: Vec<Profile>,
         /// Emit a machine-readable report
         #[arg(long)]
         json: bool,
@@ -75,6 +78,16 @@ enum Shell {
     Fish,
     Powershell,
     Zsh,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum Profile {
+    Web,
+    Rust,
+    Python,
+    Containers,
+    Infra,
+    Data,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -125,6 +138,7 @@ struct Report {
 
 struct CheckOptions {
     requirements: Vec<String>,
+    profiles: Vec<Profile>,
     json: bool,
     no_color: bool,
     only: Vec<String>,
@@ -152,6 +166,7 @@ fn main() {
         Some(Commands::Check {
             path,
             requirements,
+            profile,
             json,
             no_color,
             only,
@@ -162,6 +177,7 @@ fn main() {
             resolve_root(path),
             CheckOptions {
                 requirements,
+                profiles: profile,
                 json,
                 no_color,
                 only,
@@ -214,6 +230,9 @@ fn resolve_root(path: Option<PathBuf>) -> PathBuf {
 fn run_check(root: PathBuf, options: CheckOptions) {
     let mut diagnostics = Vec::new();
     let mut requirements_found = discover(&root, &mut diagnostics);
+    for profile in options.profiles {
+        requirements_found.extend(profile_requirements(profile));
+    }
     for input in options.requirements {
         match parse_custom_requirement(&input) {
             Ok(requirement) => requirements_found.push(requirement),
@@ -268,6 +287,26 @@ fn run_check(root: PathBuf, options: CheckOptions) {
     if report.failed > 0 || (options.strict && report.warnings > 0) {
         std::process::exit(1);
     }
+}
+
+fn profile_requirements(profile: Profile) -> Vec<Requirement> {
+    let names: &[&str] = match profile {
+        Profile::Web => &["node", "npm"],
+        Profile::Rust => &["rustc", "cargo"],
+        Profile::Python => &["python"],
+        Profile::Containers => &["docker"],
+        Profile::Infra => &["terraform"],
+        Profile::Data => &["psql", "redis-cli"],
+    };
+    let profile_name = profile
+        .to_possible_value()
+        .expect("value enum has a name")
+        .get_name()
+        .to_owned();
+    names
+        .iter()
+        .map(|name| command(name, None, format!("profile:{profile_name}"), true))
+        .collect()
 }
 
 fn matches_filter(item: &ResultItem, filter: &str) -> bool {
@@ -1130,5 +1169,12 @@ mod tests {
             Some("winget install Hashicorp.Terraform")
         );
         assert_eq!(installation_hint_for("linux", "unknown"), None);
+    }
+    #[test]
+    fn profiles_expand_to_explicit_command_requirements() {
+        let requirements = profile_requirements(Profile::Data);
+        assert_eq!(requirements.len(), 2);
+        assert_eq!(requirements[0].name, "psql");
+        assert_eq!(requirements[0].source, "profile:data");
     }
 }
