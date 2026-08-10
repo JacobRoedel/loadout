@@ -1,10 +1,12 @@
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, shells};
+use clap_mangen::Man;
 use semver::{Version, VersionReq};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    env, fs,
+    env, fs, io,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -57,6 +59,22 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Generate shell completion scripts to stdout
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+    /// Generate a roff man page to stdout
+    Man,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum Shell {
+    Bash,
+    Elvish,
+    Fish,
+    Powershell,
+    Zsh,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -153,12 +171,33 @@ fn main() {
             },
         ),
         Some(Commands::Init { path, json }) => run_init(resolve_root(path), json),
+        Some(Commands::Completions { shell }) => run_completions(shell),
+        Some(Commands::Man) => run_man(),
         None => {
             let mut cmd = Cli::command();
             cmd.print_help().expect("stdout is available");
             println!();
         }
     }
+}
+
+fn run_completions(shell: Shell) {
+    let mut command = Cli::command();
+    let mut output = io::stdout();
+    match shell {
+        Shell::Bash => generate(shells::Bash, &mut command, "loadout", &mut output),
+        Shell::Elvish => generate(shells::Elvish, &mut command, "loadout", &mut output),
+        Shell::Fish => generate(shells::Fish, &mut command, "loadout", &mut output),
+        Shell::Powershell => generate(shells::PowerShell, &mut command, "loadout", &mut output),
+        Shell::Zsh => generate(shells::Zsh, &mut command, "loadout", &mut output),
+    }
+}
+
+fn run_man() {
+    let command = Cli::command();
+    Man::new(command)
+        .render(&mut io::stdout())
+        .expect("stdout is available");
 }
 
 fn resolve_root(path: Option<PathBuf>) -> PathBuf {

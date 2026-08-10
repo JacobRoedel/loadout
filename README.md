@@ -19,3 +19,11 @@ Missing installed dependencies are warnings only. A failed command or environmen
 `loadout init` is advisory only: it prints the requirements Loadout detected from existing metadata (or JSON with `--json`) and never creates or requires a Loadout configuration file.
 
 For focused local or CI checks, use `--only environment`, `--skip dependency_state`, or a specific check name such as `--only node`. `--strict` makes warnings exit with status `1`; `--quiet` hides passing checks in human output.
+
+Generate local shell integration without committing generated files:
+
+```sh
+loadout completions zsh > ~/.zfunc/_loadout
+loadout completions bash > ~/.local/share/bash-completion/completions/loadout
+loadout man > loadout.1
+```
