@@ -37,6 +37,14 @@ enum Commands {
         #[arg(long)]
         no_color: bool,
     },
+    /// Print an advisory summary of detected requirements without creating files
+    Init {
+        /// Repository directory (defaults to the current directory)
+        path: Option<PathBuf>,
+        /// Emit a machine-readable advisory
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -85,29 +93,49 @@ struct Report {
     warnings: usize,
 }
 
+#[derive(Serialize)]
+struct Advisory {
+    path: String,
+    writes_files: bool,
+    requirements: Vec<AdvisoryItem>,
+}
+
+#[derive(Serialize)]
+struct AdvisoryItem {
+    requirement: String,
+    source: String,
+}
+
 fn main() {
     let cli = Cli::parse();
-    let Some(Commands::Check {
-        path,
-        requirements,
-        json,
-        no_color,
-    }) = cli.command
-    else {
-        let mut cmd = Cli::command();
-        cmd.print_help().expect("stdout is available");
-        println!();
-        return;
-    };
-    let root = path.unwrap_or_else(|| env::current_dir().expect("current directory is available"));
-    let root = match root.canonicalize() {
+    match cli.command {
+        Some(Commands::Check {
+            path,
+            requirements,
+            json,
+            no_color,
+        }) => run_check(resolve_root(path), requirements, json, no_color),
+        Some(Commands::Init { path, json }) => run_init(resolve_root(path), json),
+        None => {
+            let mut cmd = Cli::command();
+            cmd.print_help().expect("stdout is available");
+            println!();
+        }
+    }
+}
+
+fn resolve_root(path: Option<PathBuf>) -> PathBuf {
+    let path = path.unwrap_or_else(|| env::current_dir().expect("current directory is available"));
+    match path.canonicalize() {
         Ok(path) if path.is_dir() => path,
         _ => {
-            eprintln!("loadout: '{}' is not a readable directory", root.display());
+            eprintln!("loadout: '{}' is not a readable directory", path.display());
             std::process::exit(2);
         }
-    };
+    }
+}
 
+fn run_check(root: PathBuf, requirements: Vec<String>, json: bool, no_color: bool) {
     let mut diagnostics = Vec::new();
     let mut requirements_found = discover(&root, &mut diagnostics);
     for input in requirements {
@@ -153,6 +181,57 @@ fn main() {
     if report.failed > 0 {
         std::process::exit(1);
     }
+}
+
+fn run_init(root: PathBuf, json: bool) {
+    let mut diagnostics = Vec::new();
+    let mut requirements = discover(&root, &mut diagnostics);
+    requirements.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
+    requirements.dedup_by(|a, b| {
+        a.kind == b.kind && a.name == b.name && a.constraint == b.constraint && a.source == b.source
+    });
+    let advisory = Advisory {
+        path: display(&root),
+        writes_files: false,
+        requirements: requirements.iter().filter_map(advisory_item).collect(),
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&advisory).expect("advisory serializes")
+        );
+        return;
+    }
+    println!("Loadout advisory for {}", advisory.path);
+    println!("No files were created. Loadout reads these existing project signals automatically:");
+    if advisory.requirements.is_empty() {
+        println!("  No supported requirements were detected.");
+    } else {
+        for item in advisory.requirements {
+            println!("  - {} ({})", item.requirement, item.source);
+        }
+    }
+    if !diagnostics.is_empty() {
+        println!("\nSome metadata could not be parsed; run `loadout check` for details.");
+    }
+    println!(
+        "\nRun `loadout check` to validate this environment. Use `--require` only for one-off requirements."
+    );
+}
+
+fn advisory_item(requirement: &Requirement) -> Option<AdvisoryItem> {
+    let rendered = match requirement.kind {
+        Kind::Command => match &requirement.constraint {
+            Some(constraint) => format!("cmd:{}@{constraint}", requirement.name),
+            None => format!("cmd:{}", requirement.name),
+        },
+        Kind::Environment => format!("env:{}", requirement.name),
+        Kind::DependencyState => return None,
+    };
+    Some(AdvisoryItem {
+        requirement: rendered,
+        source: requirement.source.clone(),
+    })
 }
 
 fn ignored(entry: &DirEntry) -> bool {
@@ -750,5 +829,22 @@ mod tests {
     fn version_extraction_is_safe() {
         assert_eq!(extract_version("node v22.3.1"), Some("22.3.1".into()));
         assert_eq!(extract_version("stable"), None);
+    }
+    #[test]
+    fn advisory_renders_only_actionable_requirements() {
+        let command = command("node", Some(">=22".into()), "package.json".into(), true);
+        assert_eq!(
+            advisory_item(&command).unwrap().requirement,
+            "cmd:node@>=22"
+        );
+        let state = Requirement {
+            kind: Kind::DependencyState,
+            name: "node_modules".into(),
+            constraint: None,
+            source: "project".into(),
+            required: false,
+            message: None,
+        };
+        assert!(advisory_item(&state).is_none());
     }
 }
