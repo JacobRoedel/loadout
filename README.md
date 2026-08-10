@@ -20,6 +20,8 @@ Missing installed dependencies are warnings only. A failed command or environmen
 
 For focused local or CI checks, use `--only environment`, `--skip dependency_state`, or a specific check name such as `--only node`. `--strict` makes warnings exit with status `1`; `--quiet` hides passing checks in human output.
 
+When an executable is missing, Loadout prints a non-executing installation hint tailored to macOS, Linux, or Windows when it knows one. Review the command before running it; Loadout never installs tools itself.
+
 Generate local shell integration without committing generated files:
 
 ```sh
