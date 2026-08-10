@@ -309,6 +309,44 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
                 python_projects.push(path.parent().unwrap().to_path_buf());
                 found.extend(pyproject_requirements(path));
             }
+            "go.mod" => {
+                found.push(command("go", go_mod_constraint(path), display(path), true));
+            }
+            "pom.xml" | "build.gradle" | "build.gradle.kts" | "gradlew" => {
+                found.push(command("java", None, display(path), true));
+            }
+            ".ruby-version" => {
+                if let Ok(version) = fs::read_to_string(path) {
+                    let version = version.trim();
+                    if !version.is_empty() {
+                        found.push(command(
+                            "ruby",
+                            Some(normalize_exact(version)),
+                            display(path),
+                            true,
+                        ));
+                    }
+                }
+            }
+            "Gemfile" => found.push(command("ruby", None, display(path), true)),
+            "Gemfile.lock" => found.push(command("bundle", None, display(path), true)),
+            "Dockerfile"
+            | "docker-compose.yml"
+            | "docker-compose.yaml"
+            | "compose.yml"
+            | "compose.yaml" => {
+                found.push(command("docker", None, display(path), true));
+            }
+            _ if name.starts_with("Dockerfile.") => {
+                found.push(command("docker", None, display(path), true))
+            }
+            _ if name.ends_with(".tf") => {
+                found.push(command("terraform", None, display(path), true))
+            }
+            ".psqlrc" | "postgresql.conf" => found.push(command("psql", None, display(path), true)),
+            ".rediscli_history" | "redis.conf" => {
+                found.push(command("redis-cli", None, display(path), true))
+            }
             "uv.lock" => found.push(command("uv", None, display(path), true)),
             "poetry.lock" => found.push(command("poetry", None, display(path), true)),
             "Pipfile" | "Pipfile.lock" => found.push(command("pipenv", None, display(path), true)),
@@ -480,6 +518,15 @@ fn cargo_requirements(path: &Path) -> Vec<Requirement> {
         command("rustc", constraint, display(path), true),
         command("cargo", None, display(path), true),
     ]
+}
+
+fn go_mod_constraint(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok().and_then(|contents| {
+        contents.lines().find_map(|line| {
+            let version = line.trim().strip_prefix("go ")?.trim();
+            (!version.is_empty()).then(|| format!(">={}", normalize_version(version)))
+        })
+    })
 }
 
 fn pyproject_requirements(path: &Path) -> Vec<Requirement> {
@@ -846,5 +893,12 @@ mod tests {
             message: None,
         };
         assert!(advisory_item(&state).is_none());
+    }
+    #[test]
+    fn reads_go_version_from_module_file() {
+        let path = std::env::temp_dir().join("loadout-go-mod-test");
+        fs::write(&path, "module example.com/demo\n\ngo 1.23\n").unwrap();
+        assert_eq!(go_mod_constraint(&path).as_deref(), Some(">=1.23.0"));
+        fs::remove_file(path).unwrap();
     }
 }
