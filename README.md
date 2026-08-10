@@ -12,7 +12,7 @@ loadout check --json
 loadout init
 ```
 
-It currently recognizes Node.js (`package.json`, Volta, `.nvmrc`, lockfiles), Rust (`Cargo.toml`, `rust-toolchain`), Python (`pyproject.toml`, `.python-version`, common lockfiles), and required variables documented in root `.env.example` or `.env.sample`.
+It recognizes Node.js (`package.json`, Volta, `.nvmrc`, lockfiles), Rust (`Cargo.toml`, `rust-toolchain`), Python (`pyproject.toml`, `.python-version`, common lockfiles), Go (`go.mod`), Java (`pom.xml`, Gradle), Ruby (`Gemfile`, `.ruby-version`), Docker/Compose, Terraform, and explicit Postgres/Redis development markers. It also reads required variables documented in root `.env.example` or `.env.sample`.
 
 Missing installed dependencies are warnings only. A failed command or environment check exits with status `1`; warnings still exit `0`.
 
