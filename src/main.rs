@@ -365,13 +365,7 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
         }
     }
     for path in node_projects {
-        dependency_warning(
-            &mut found,
-            &path,
-            "node_modules",
-            ".pnp.cjs",
-            "Node dependencies do not appear to be installed",
-        );
+        node_dependency_warning(&mut found, &path);
     }
     for path in rust_projects {
         dependency_warning(
@@ -429,6 +423,27 @@ fn dependency_warning(
     }
 }
 
+fn node_dependency_warning(found: &mut Vec<Requirement>, project: &Path) {
+    let install = if project.join("pnpm-lock.yaml").exists() {
+        "pnpm install --frozen-lockfile"
+    } else if project.join("yarn.lock").exists() {
+        "yarn install --immutable"
+    } else if project.join("bun.lock").exists() || project.join("bun.lockb").exists() {
+        "bun install --frozen-lockfile"
+    } else if project.join("package-lock.json").exists() {
+        "npm ci"
+    } else {
+        "npm install"
+    };
+    dependency_warning(
+        found,
+        project,
+        "node_modules",
+        ".pnp.cjs",
+        &format!("Node dependencies do not appear to be installed; run `{install}`"),
+    );
+}
+
 fn node_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> {
     let mut found = Vec::new();
     let source = display(path);
@@ -453,6 +468,7 @@ fn node_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requ
                 true,
             ));
         }
+        node_lockfile_health(path, name, diagnostics);
     }
     for name in ["node", "npm", "pnpm", "yarn"] {
         if let Some(version) = value
@@ -468,6 +484,30 @@ fn node_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requ
         }
     }
     found
+}
+
+fn node_lockfile_health(path: &Path, declared_manager: &str, diagnostics: &mut Vec<ResultItem>) {
+    let directory = path.parent().expect("package.json has a parent");
+    let locks = [
+        ("package-lock.json", "npm"),
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+    ];
+    for (lockfile, manager) in locks {
+        if directory.join(lockfile).exists() && manager != declared_manager {
+            diagnostics.push(ResultItem {
+                status: Status::Fail,
+                kind: Kind::Command,
+                name: declared_manager.into(),
+                constraint: None,
+                source: display(path),
+                found: Some(lockfile.into()),
+                message: format!("packageManager declares '{declared_manager}', but '{lockfile}' requires '{manager}'"),
+            });
+        }
+    }
 }
 
 fn rust_toolchain_requirements(path: &Path) -> Vec<Requirement> {
@@ -900,5 +940,19 @@ mod tests {
         fs::write(&path, "module example.com/demo\n\ngo 1.23\n").unwrap();
         assert_eq!(go_mod_constraint(&path).as_deref(), Some(">=1.23.0"));
         fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn detects_package_manager_and_lockfile_mismatch() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-lock-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let package = directory.join("package.json");
+        fs::write(&package, "{}").unwrap();
+        fs::write(directory.join("package-lock.json"), "{}").unwrap();
+        let mut diagnostics = Vec::new();
+        node_lockfile_health(&package, "pnpm", &mut diagnostics);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(matches!(diagnostics[0].status, Status::Fail));
+        fs::remove_dir_all(directory).unwrap();
     }
 }
