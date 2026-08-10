@@ -22,6 +22,8 @@ For focused local or CI checks, use `--only environment`, `--skip dependency_sta
 
 When an executable is missing, Loadout prints a non-executing installation hint tailored to macOS, Linux, or Windows when it knows one. Review the command before running it; Loadout never installs tools itself.
 
+Optional reusable profiles add standard requirements without a repository configuration file. Use `--profile web`, `--profile containers`, `--profile infra`, `--profile data`, `--profile python`, or `--profile rust`; CI can set `LOADOUT_PROFILE=web,containers` instead. Profiles only add checks for the invocation.
+
 Generate local shell integration without committing generated files:
 
 ```sh
