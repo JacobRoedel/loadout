@@ -812,10 +812,7 @@ fn evaluate_command(requirement: &Requirement) -> ResultItem {
         None => (
             unavailable,
             None,
-            format!(
-                "Install '{}' and ensure it is available on PATH",
-                requirement.name
-            ),
+            missing_command_message(&requirement.name),
         ),
         Some((_, output)) if !output.status.success() => (
             unavailable,
@@ -867,6 +864,53 @@ fn evaluate_command(requirement: &Requirement) -> ResultItem {
         source: requirement.source.clone(),
         found,
         message,
+    }
+}
+
+fn missing_command_message(name: &str) -> String {
+    let generic = format!("Install '{name}' and ensure it is available on PATH");
+    installation_hint_for(env::consts::OS, name)
+        .map(|hint| format!("{generic}; try `{hint}`"))
+        .unwrap_or(generic)
+}
+
+fn installation_hint_for(os: &str, name: &str) -> Option<&'static str> {
+    match (os, name) {
+        ("macos", "node") => Some("brew install node"),
+        ("macos", "npm") => Some("brew install node"),
+        ("macos", "pnpm") => Some("brew install pnpm"),
+        ("macos", "yarn") => Some("brew install yarn"),
+        ("macos", "bun") => Some("brew install oven-sh/bun/bun"),
+        ("macos", "rustc" | "cargo") => Some("brew install rust"),
+        ("macos", "python") => Some("brew install python"),
+        ("macos", "go") => Some("brew install go"),
+        ("macos", "java") => Some("brew install openjdk"),
+        ("macos", "ruby") => Some("brew install ruby"),
+        ("macos", "docker") => Some("brew install --cask docker"),
+        ("macos", "terraform") => Some("brew install terraform"),
+        ("macos", "psql") => Some("brew install libpq"),
+        ("macos", "redis-cli") => Some("brew install redis"),
+        ("linux", "node" | "npm") => Some("sudo apt install nodejs npm"),
+        ("linux", "pnpm") => Some("npm install --global pnpm"),
+        ("linux", "yarn") => Some("npm install --global yarn"),
+        ("linux", "rustc" | "cargo") => Some("sudo apt install rustc cargo"),
+        ("linux", "python") => Some("sudo apt install python3"),
+        ("linux", "go") => Some("sudo apt install golang"),
+        ("linux", "java") => Some("sudo apt install default-jdk"),
+        ("linux", "ruby") => Some("sudo apt install ruby"),
+        ("linux", "docker") => Some("sudo apt install docker.io"),
+        ("linux", "terraform") => Some("sudo apt install terraform"),
+        ("linux", "psql") => Some("sudo apt install postgresql-client"),
+        ("linux", "redis-cli") => Some("sudo apt install redis-tools"),
+        ("windows", "node" | "npm") => Some("winget install OpenJS.NodeJS.LTS"),
+        ("windows", "rustc" | "cargo") => Some("winget install Rustlang.Rustup"),
+        ("windows", "python") => Some("winget install Python.Python.3.12"),
+        ("windows", "go") => Some("winget install GoLang.Go"),
+        ("windows", "java") => Some("winget install EclipseAdoptium.Temurin.21.JDK"),
+        ("windows", "ruby") => Some("winget install RubyInstallerTeam.RubyWithDevKit"),
+        ("windows", "docker") => Some("winget install Docker.DockerDesktop"),
+        ("windows", "terraform") => Some("winget install Hashicorp.Terraform"),
+        _ => None,
     }
 }
 
@@ -1074,5 +1118,17 @@ mod tests {
         assert!(matches_filter(&item, "environment"));
         assert!(matches_filter(&item, "DATABASE_URL"));
         assert!(!matches_filter(&item, "command"));
+    }
+    #[test]
+    fn remediation_is_os_and_tool_specific() {
+        assert_eq!(
+            installation_hint_for("macos", "node"),
+            Some("brew install node")
+        );
+        assert_eq!(
+            installation_hint_for("windows", "terraform"),
+            Some("winget install Hashicorp.Terraform")
+        );
+        assert_eq!(installation_hint_for("linux", "unknown"), None);
     }
 }
