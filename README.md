@@ -1,5 +1,7 @@
 # Loadout
 
+[![CI](https://github.com/JacobRoedel/loadout/actions/workflows/ci.yml/badge.svg)](https://github.com/JacobRoedel/loadout/actions/workflows/ci.yml)
+
 Loadout tells you whether your local machine has the prerequisites needed to work in a repository. It reads existing project metadata; it does not add configuration, install tools, run package managers, or use the network.
 
 ```sh
