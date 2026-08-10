@@ -394,6 +394,9 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
     let mut node_projects = Vec::new();
     let mut rust_projects = Vec::new();
     let mut python_projects = Vec::new();
+    let mut node_workspace_roots = Vec::new();
+    let mut cargo_workspace_roots = Vec::new();
+    let mut python_workspace_roots = Vec::new();
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| !ignored(e))
@@ -406,8 +409,15 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
         let name = entry.file_name().to_string_lossy();
         match name.as_ref() {
             "package.json" => {
-                node_projects.push(path.parent().unwrap().to_path_buf());
+                let dir = path.parent().unwrap().to_path_buf();
+                if is_node_workspace_root(path) {
+                    node_workspace_roots.push(dir.clone());
+                }
+                node_projects.push(dir);
                 found.extend(node_requirements(path, diagnostics));
+            }
+            "pnpm-workspace.yaml" => {
+                node_workspace_roots.push(path.parent().unwrap().to_path_buf());
             }
             ".nvmrc" | ".node-version" => {
                 if let Ok(value) = fs::read_to_string(path) {
@@ -427,7 +437,11 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
                 found.extend(rust_toolchain_requirements(path));
             }
             "Cargo.toml" => {
-                rust_projects.push(path.parent().unwrap().to_path_buf());
+                let dir = path.parent().unwrap().to_path_buf();
+                if is_cargo_workspace_root(path) {
+                    cargo_workspace_roots.push(dir.clone());
+                }
+                rust_projects.push(dir);
                 found.extend(cargo_requirements(path));
             }
             ".python-version" => {
@@ -444,7 +458,11 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
                 }
             }
             "pyproject.toml" => {
-                python_projects.push(path.parent().unwrap().to_path_buf());
+                let dir = path.parent().unwrap().to_path_buf();
+                if is_uv_workspace_root(path) {
+                    python_workspace_roots.push(dir.clone());
+                }
+                python_projects.push(dir);
                 found.extend(pyproject_requirements(path));
             }
             "go.mod" => {
@@ -503,9 +521,16 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
         }
     }
     for path in node_projects {
-        node_dependency_warning(&mut found, &path);
+        if is_workspace_member(&path, &node_workspace_roots) {
+            continue;
+        }
+        let is_workspace_root = node_workspace_roots.contains(&path);
+        node_dependency_warning(&mut found, &path, is_workspace_root);
     }
     for path in rust_projects {
+        if is_workspace_member(&path, &cargo_workspace_roots) {
+            continue;
+        }
         dependency_warning(
             &mut found,
             &path,
@@ -515,6 +540,9 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
         );
     }
     for path in python_projects {
+        if is_workspace_member(&path, &python_workspace_roots) {
+            continue;
+        }
         dependency_warning(
             &mut found,
             &path,
@@ -525,6 +553,40 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
     }
     found.extend(env_requirements(root));
     found
+}
+
+/// True when `path` sits under one of `roots` but is not a root itself,
+/// so a single check at the workspace root covers it.
+fn is_workspace_member(path: &Path, roots: &[PathBuf]) -> bool {
+    roots
+        .iter()
+        .any(|root| path != root && path.starts_with(root))
+}
+
+fn is_node_workspace_root(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .is_some_and(|v| v.get("workspaces").is_some())
+}
+
+fn is_cargo_workspace_root(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+        .is_some_and(|v| v.get("workspace").is_some())
+}
+
+fn is_uv_workspace_root(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+        .is_some_and(|v| {
+            v.get("tool")
+                .and_then(|t| t.get("uv"))
+                .and_then(|u| u.get("workspace"))
+                .is_some()
+        })
 }
 
 fn display(path: &Path) -> String {
@@ -561,7 +623,7 @@ fn dependency_warning(
     }
 }
 
-fn node_dependency_warning(found: &mut Vec<Requirement>, project: &Path) {
+fn node_dependency_warning(found: &mut Vec<Requirement>, project: &Path, is_workspace_root: bool) {
     let install = if project.join("pnpm-lock.yaml").exists() {
         "pnpm install --frozen-lockfile"
     } else if project.join("yarn.lock").exists() {
@@ -570,15 +632,26 @@ fn node_dependency_warning(found: &mut Vec<Requirement>, project: &Path) {
         "bun install --frozen-lockfile"
     } else if project.join("package-lock.json").exists() {
         "npm ci"
+    } else if project.join("pnpm-workspace.yaml").exists() {
+        "pnpm install"
     } else {
         "npm install"
+    };
+    let location = if is_workspace_root {
+        if project.join("turbo.json").exists() {
+            " from the Turborepo workspace root"
+        } else {
+            " from the workspace root"
+        }
+    } else {
+        ""
     };
     dependency_warning(
         found,
         project,
         "node_modules",
         ".pnp.cjs",
-        &format!("Node dependencies do not appear to be installed; run `{install}`"),
+        &format!("Node dependencies do not appear to be installed; run `{install}`{location}"),
     );
 }
 
@@ -1176,5 +1249,69 @@ mod tests {
         assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].name, "psql");
         assert_eq!(requirements[0].source, "profile:data");
+    }
+    #[test]
+    fn detects_node_and_cargo_workspace_roots() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-workspace-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let package = directory.join("package.json");
+        fs::write(&package, r#"{"workspaces": ["packages/*"]}"#).unwrap();
+        assert!(is_node_workspace_root(&package));
+
+        let plain_package = directory.join("plain.json");
+        fs::write(&plain_package, "{}").unwrap();
+        assert!(!is_node_workspace_root(&plain_package));
+
+        let cargo_toml = directory.join("Cargo.toml");
+        fs::write(&cargo_toml, "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
+        assert!(is_cargo_workspace_root(&cargo_toml));
+
+        let plain_cargo = directory.join("plain-cargo.toml");
+        fs::write(&plain_cargo, "[package]\nname = \"demo\"\n").unwrap();
+        assert!(!is_cargo_workspace_root(&plain_cargo));
+
+        let pyproject = directory.join("pyproject.toml");
+        fs::write(
+            &pyproject,
+            "[tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        )
+        .unwrap();
+        assert!(is_uv_workspace_root(&pyproject));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn workspace_members_are_recognized_as_descendants_of_a_root() {
+        let root = PathBuf::from("/repo");
+        let member = PathBuf::from("/repo/packages/app");
+        let roots = vec![root.clone()];
+        assert!(is_workspace_member(&member, &roots));
+        assert!(!is_workspace_member(&root, &roots));
+        assert!(!is_workspace_member(
+            &PathBuf::from("/other/project"),
+            &roots
+        ));
+    }
+    #[test]
+    fn workspace_root_install_message_names_the_root() {
+        let directory = std::env::temp_dir().join(format!(
+            "loadout-workspace-install-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("pnpm-workspace.yaml"),
+            "packages:\n  - packages/*\n",
+        )
+        .unwrap();
+        fs::write(directory.join("turbo.json"), "{}").unwrap();
+        let mut found = Vec::new();
+        node_dependency_warning(&mut found, &directory, true);
+        assert_eq!(found.len(), 1);
+        let message = found[0].message.as_deref().unwrap();
+        assert!(message.contains("pnpm install"));
+        assert!(message.contains("Turborepo workspace root"));
+        fs::remove_dir_all(directory).unwrap();
     }
 }
