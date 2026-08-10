@@ -17,3 +17,5 @@ It recognizes Node.js (`package.json`, Volta, `.nvmrc`, lockfiles), Rust (`Cargo
 Missing installed dependencies are warnings only. A failed command or environment check exits with status `1`; warnings still exit `0`.
 
 `loadout init` is advisory only: it prints the requirements Loadout detected from existing metadata (or JSON with `--json`) and never creates or requires a Loadout configuration file.
+
+For focused local or CI checks, use `--only environment`, `--skip dependency_state`, or a specific check name such as `--only node`. `--strict` makes warnings exit with status `1`; `--quiet` hides passing checks in human output.

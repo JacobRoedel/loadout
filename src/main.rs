@@ -36,6 +36,18 @@ enum Commands {
         /// Disable ANSI colors in human output
         #[arg(long)]
         no_color: bool,
+        /// Include only checks matching a kind (command, environment, dependency_state) or name
+        #[arg(long, value_name = "FILTER")]
+        only: Vec<String>,
+        /// Exclude checks matching a kind (command, environment, dependency_state) or name
+        #[arg(long, value_name = "FILTER")]
+        skip: Vec<String>,
+        /// Treat warnings as failures for this invocation
+        #[arg(long)]
+        strict: bool,
+        /// Suppress passing checks in human output
+        #[arg(long, conflicts_with = "json")]
+        quiet: bool,
     },
     /// Print an advisory summary of detected requirements without creating files
     Init {
@@ -93,6 +105,16 @@ struct Report {
     warnings: usize,
 }
 
+struct CheckOptions {
+    requirements: Vec<String>,
+    json: bool,
+    no_color: bool,
+    only: Vec<String>,
+    skip: Vec<String>,
+    strict: bool,
+    quiet: bool,
+}
+
 #[derive(Serialize)]
 struct Advisory {
     path: String,
@@ -114,7 +136,22 @@ fn main() {
             requirements,
             json,
             no_color,
-        }) => run_check(resolve_root(path), requirements, json, no_color),
+            only,
+            skip,
+            strict,
+            quiet,
+        }) => run_check(
+            resolve_root(path),
+            CheckOptions {
+                requirements,
+                json,
+                no_color,
+                only,
+                skip,
+                strict,
+                quiet,
+            },
+        ),
         Some(Commands::Init { path, json }) => run_init(resolve_root(path), json),
         None => {
             let mut cmd = Cli::command();
@@ -135,10 +172,10 @@ fn resolve_root(path: Option<PathBuf>) -> PathBuf {
     }
 }
 
-fn run_check(root: PathBuf, requirements: Vec<String>, json: bool, no_color: bool) {
+fn run_check(root: PathBuf, options: CheckOptions) {
     let mut diagnostics = Vec::new();
     let mut requirements_found = discover(&root, &mut diagnostics);
-    for input in requirements {
+    for input in options.requirements {
         match parse_custom_requirement(&input) {
             Ok(requirement) => requirements_found.push(requirement),
             Err(message) => {
@@ -153,6 +190,17 @@ fn run_check(root: PathBuf, requirements: Vec<String>, json: bool, no_color: boo
         .map(|r| evaluate(r, &root, &env_values))
         .collect();
     results.append(&mut diagnostics);
+    results.retain(|item| {
+        (options.only.is_empty()
+            || options
+                .only
+                .iter()
+                .any(|filter| matches_filter(item, filter)))
+            && !options
+                .skip
+                .iter()
+                .any(|filter| matches_filter(item, filter))
+    });
     results.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
     let report = Report {
         path: root.display().to_string(),
@@ -170,16 +218,28 @@ fn run_check(root: PathBuf, requirements: Vec<String>, json: bool, no_color: boo
             .count(),
         results,
     };
-    if json {
+    if options.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&report).expect("report serializes")
         );
     } else {
-        print_human(&report, !no_color);
+        print_human(&report, !options.no_color, options.quiet);
     }
-    if report.failed > 0 {
+    if report.failed > 0 || (options.strict && report.warnings > 0) {
         std::process::exit(1);
+    }
+}
+
+fn matches_filter(item: &ResultItem, filter: &str) -> bool {
+    item.name == filter || kind_name(&item.kind) == filter
+}
+
+fn kind_name(kind: &Kind) -> &str {
+    match kind {
+        Kind::Command => "command",
+        Kind::Environment => "environment",
+        Kind::DependencyState => "dependency_state",
     }
 }
 
@@ -851,9 +911,15 @@ fn warn(name: &str, source: String, message: &str) -> ResultItem {
         message: message.into(),
     }
 }
-fn print_human(report: &Report, color: bool) {
+fn print_human(report: &Report, color: bool, quiet: bool) {
+    if quiet && report.failed == 0 && report.warnings == 0 {
+        return;
+    }
     println!("Loadout: {}", report.path);
     for item in &report.results {
+        if quiet && matches!(item.status, Status::Pass) {
+            continue;
+        }
         let (label, code) = match item.status {
             Status::Pass => ("PASS", "32"),
             Status::Fail => ("FAIL", "31"),
@@ -954,5 +1020,20 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert!(matches!(diagnostics[0].status, Status::Fail));
         fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn filters_match_kind_or_check_name() {
+        let item = ResultItem {
+            status: Status::Pass,
+            kind: Kind::Environment,
+            name: "DATABASE_URL".into(),
+            constraint: None,
+            source: "test".into(),
+            found: None,
+            message: "set".into(),
+        };
+        assert!(matches_filter(&item, "environment"));
+        assert!(matches_filter(&item, "DATABASE_URL"));
+        assert!(!matches_filter(&item, "command"));
     }
 }
