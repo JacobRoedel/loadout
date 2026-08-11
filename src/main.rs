@@ -1073,6 +1073,7 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
     let mut node_projects = Vec::new();
     let mut rust_projects = Vec::new();
     let mut python_projects = Vec::new();
+    let mut ruby_projects = Vec::new();
     let mut node_workspace_roots = Vec::new();
     let mut cargo_workspace_roots = Vec::new();
     let mut python_workspace_roots = Vec::new();
@@ -1163,8 +1164,14 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
                     }
                 }
             }
-            "Gemfile" => found.push(command("ruby", None, display(path), true)),
-            "Gemfile.lock" => found.push(command("bundle", None, display(path), true)),
+            "Gemfile" => {
+                ruby_projects.push(path.parent().unwrap().to_path_buf());
+                found.push(command("ruby", None, display(path), true));
+            }
+            "Gemfile.lock" => {
+                ruby_projects.push(path.parent().unwrap().to_path_buf());
+                found.push(command("bundle", None, display(path), true));
+            }
             "Dockerfile"
             | "docker-compose.yml"
             | "docker-compose.yaml"
@@ -1199,6 +1206,12 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
             }
         }
     }
+    rust_projects.sort();
+    rust_projects.dedup();
+    python_projects.sort();
+    python_projects.dedup();
+    ruby_projects.sort();
+    ruby_projects.dedup();
     for path in node_projects {
         if is_workspace_member(&path, &node_workspace_roots) {
             continue;
@@ -1215,20 +1228,17 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
             &path,
             "target",
             "",
-            "Cargo build artifacts are absent; run cargo build or cargo test",
+            "Cargo build artifacts are absent; run `cargo build`",
         );
     }
     for path in python_projects {
         if is_workspace_member(&path, &python_workspace_roots) {
             continue;
         }
-        dependency_warning(
-            &mut found,
-            &path,
-            ".venv",
-            "venv",
-            "A local Python virtual environment is absent",
-        );
+        python_dependency_warning(&mut found, &path);
+    }
+    for path in ruby_projects {
+        ruby_dependency_warning(&mut found, &path);
     }
     found.extend(env_requirements(root));
     found
@@ -1331,6 +1341,67 @@ fn node_dependency_warning(found: &mut Vec<Requirement>, project: &Path, is_work
         "node_modules",
         ".pnp.cjs",
         &format!("Node dependencies do not appear to be installed; run `{install}`{location}"),
+    );
+}
+
+/// Recommends the install command that matches whichever Python tool the
+/// project has actually declared (uv, Poetry, Pipenv, a requirements file,
+/// or a plain pyproject.toml), instead of a generic "activate a venv".
+fn python_dependency_warning(found: &mut Vec<Requirement>, project: &Path) {
+    let message = if project.join("uv.lock").exists() {
+        "A local Python virtual environment is absent; run `uv sync` to create one and install dependencies".to_owned()
+    } else if project.join("poetry.lock").exists() {
+        "A local Python virtual environment is absent; run `poetry install` to create one and install dependencies".to_owned()
+    } else if project.join("Pipfile.lock").exists() || project.join("Pipfile").exists() {
+        "A local Python virtual environment is absent; run `pipenv install` to create one and install dependencies".to_owned()
+    } else if let Some(requirements_file) = find_requirements_file(project) {
+        format!(
+            "A local Python virtual environment is absent; create one, activate it, and run `pip install -r {requirements_file}`"
+        )
+    } else if project.join("pyproject.toml").exists() {
+        "A local Python virtual environment is absent; create one, activate it, and run `pip install -e .`".to_owned()
+    } else {
+        "A local Python virtual environment is absent".to_owned()
+    };
+    dependency_warning(found, project, ".venv", "venv", &message);
+}
+
+/// Finds a `requirements*.txt` file in `project`, preferring the
+/// conventional `requirements.txt` over variants like
+/// `requirements-dev.txt` when both exist.
+fn find_requirements_file(project: &Path) -> Option<String> {
+    let mut candidates: Vec<String> = fs::read_dir(project)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (name.starts_with("requirements") && (name.ends_with(".txt") || name == "requirements"))
+                .then_some(name)
+        })
+        .collect();
+    candidates.sort();
+    if let Some(position) = candidates
+        .iter()
+        .position(|name| name == "requirements.txt")
+    {
+        return Some(candidates.remove(position));
+    }
+    candidates.into_iter().next()
+}
+
+/// Only warns when the project has explicitly opted into a local vendor
+/// path (`.bundle/config`)—without that, gems installing to the system gem
+/// home leave no repository-local trace we could check.
+fn ruby_dependency_warning(found: &mut Vec<Requirement>, project: &Path) {
+    if !project.join(".bundle").join("config").exists() {
+        return;
+    }
+    dependency_warning(
+        found,
+        project,
+        "vendor/bundle",
+        "",
+        "Ruby gems do not appear to be vendored; run `bundle install`",
     );
 }
 
@@ -2447,5 +2518,55 @@ mod tests {
         assert_eq!(ignored, 1);
         assert!(results.is_empty());
         fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn python_install_guidance_matches_the_declared_tool() {
+        let directory = std::env::temp_dir().join(format!(
+            "loadout-python-install-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+
+        fs::write(directory.join("uv.lock"), "").unwrap();
+        let mut found = Vec::new();
+        python_dependency_warning(&mut found, &directory);
+        assert!(found[0].message.as_deref().unwrap().contains("uv sync"));
+        fs::remove_file(directory.join("uv.lock")).unwrap();
+
+        fs::write(directory.join("requirements-dev.txt"), "").unwrap();
+        fs::write(directory.join("requirements.txt"), "").unwrap();
+        let mut found = Vec::new();
+        python_dependency_warning(&mut found, &directory);
+        assert!(
+            found[0]
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("pip install -r requirements.txt")
+        );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    #[test]
+    fn ruby_dependency_warning_requires_local_bundle_config() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-ruby-install-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let mut found = Vec::new();
+        ruby_dependency_warning(&mut found, &directory);
+        assert!(found.is_empty(), "no .bundle/config means no signal");
+
+        fs::create_dir_all(directory.join(".bundle")).unwrap();
+        fs::write(directory.join(".bundle/config"), "").unwrap();
+        let mut found = Vec::new();
+        ruby_dependency_warning(&mut found, &directory);
+        assert_eq!(found.len(), 1);
+        assert!(
+            found[0]
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("bundle install")
+        );
+        fs::remove_dir_all(&directory).unwrap();
     }
 }
