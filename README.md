@@ -157,6 +157,16 @@ loadout init --json
 
 It writes no files and does not make its output a required input to Loadout.
 
+`loadout init` also lists the runnable commands it finds in the repository, so you can see what's available for dev/test/build without opening every file:
+
+- **npm scripts** — `package.json` `scripts`
+- **Makefile** — top-level targets (`make <target>`)
+- **Justfile** — top-level recipes (`just <recipe>`)
+- **Taskfile** — `Taskfile.yml`/`Taskfile.yaml` tasks (`task <name>`)
+- **Docker Compose** — service names (`docker compose up <service>`)
+
+This is advisory only—commands are listed, never executed.
+
 ## Guided remediation with `loadout doctor`
 
 `loadout doctor` runs the same checks as `loadout check`, then groups every blocker into ordered steps instead of a flat list:
