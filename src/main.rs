@@ -1190,24 +1190,20 @@ fn connectivity_requirements(
 /// Recognizes common database/cache/queue connection strings and extracts
 /// only the host and port—credentials and paths are discarded immediately.
 fn parse_service_url(value: &str) -> Option<(&'static str, String, u16)> {
-    let (service, default_port, rest) = if let Some(rest) = value
-        .strip_prefix("postgres://")
-        .or_else(|| value.strip_prefix("postgresql://"))
-    {
-        ("postgres", 5432, rest)
-    } else if let Some(rest) = value.strip_prefix("mysql://") {
-        ("mysql", 3306, rest)
-    } else if let Some(rest) = value.strip_prefix("rediss://") {
-        ("redis", 6380, rest)
-    } else if let Some(rest) = value.strip_prefix("redis://") {
-        ("redis", 6379, rest)
-    } else if let Some(rest) = value.strip_prefix("mongodb://") {
-        ("mongodb", 27017, rest)
-    } else if let Some(rest) = value.strip_prefix("amqp://") {
-        ("rabbitmq", 5672, rest)
-    } else {
-        return None;
-    };
+    const SCHEMES: &[(&str, &str, u16)] = &[
+        ("postgres://", "postgres", 5432),
+        ("postgresql://", "postgres", 5432),
+        ("mysql://", "mysql", 3306),
+        ("rediss://", "redis", 6380),
+        ("redis://", "redis", 6379),
+        ("mongodb://", "mongodb", 27017),
+        ("amqp://", "rabbitmq", 5672),
+    ];
+    let (service, default_port, rest) = SCHEMES.iter().find_map(|(prefix, service, port)| {
+        value
+            .strip_prefix(prefix)
+            .map(|rest| (*service, *port, rest))
+    })?;
     let after_at = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
     let host_port = after_at
         .split(['/', '?'])
