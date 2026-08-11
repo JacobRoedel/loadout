@@ -64,6 +64,9 @@ enum Commands {
         /// Emit GitHub Actions ::error/::warning annotations for failing and warning checks
         #[arg(long)]
         annotate: bool,
+        /// Ignore the repository's .loadoutignore file for this invocation
+        #[arg(long)]
+        no_ignore_file: bool,
     },
     /// Print an advisory summary of detected requirements without creating files
     Init {
@@ -95,6 +98,9 @@ enum Commands {
         /// Also verify configured services are reachable (makes network connections; opt-in)
         #[arg(long)]
         services: bool,
+        /// Ignore the repository's .loadoutignore file for this invocation
+        #[arg(long)]
+        no_ignore_file: bool,
     },
     /// Generate shell completion scripts to stdout
     Completions {
@@ -169,6 +175,7 @@ struct Report {
     passed: usize,
     failed: usize,
     warnings: usize,
+    ignored: usize,
 }
 
 struct CheckOptions {
@@ -183,6 +190,7 @@ struct CheckOptions {
     services: bool,
     changed: Option<String>,
     annotate: bool,
+    no_ignore_file: bool,
 }
 
 struct DoctorOptions {
@@ -192,6 +200,7 @@ struct DoctorOptions {
     no_color: bool,
     open_docs: bool,
     services: bool,
+    no_ignore_file: bool,
 }
 
 #[derive(Serialize)]
@@ -237,6 +246,7 @@ fn main() {
             services,
             changed,
             annotate,
+            no_ignore_file,
         }) => run_check(
             resolve_root(path),
             CheckOptions {
@@ -251,6 +261,7 @@ fn main() {
                 services,
                 changed,
                 annotate,
+                no_ignore_file,
             },
         ),
         Some(Commands::Init { path, json }) => run_init(resolve_root(path), json),
@@ -262,6 +273,7 @@ fn main() {
             no_color,
             open_docs,
             services,
+            no_ignore_file,
         }) => run_doctor(
             resolve_root(path),
             DoctorOptions {
@@ -271,6 +283,7 @@ fn main() {
                 no_color,
                 open_docs,
                 services,
+                no_ignore_file,
             },
         ),
         Some(Commands::Completions { shell }) => run_completions(shell),
@@ -355,6 +368,7 @@ fn run_check(root: PathBuf, options: CheckOptions) {
         options.profiles,
         options.services,
     );
+    let ignored = apply_ignore_file(&mut results, &root, options.no_ignore_file);
     results.retain(|item| {
         (options.only.is_empty()
             || options
@@ -390,6 +404,7 @@ fn run_check(root: PathBuf, options: CheckOptions) {
             .iter()
             .filter(|r| matches!(r.status, Status::Warn))
             .count(),
+        ignored,
         results,
     };
     if options.json {
@@ -552,6 +567,7 @@ fn open_url(url: &str) {
 struct DoctorReport {
     path: String,
     passed: usize,
+    ignored: usize,
     steps: Vec<DoctorStepReport>,
 }
 
@@ -580,6 +596,7 @@ fn run_doctor(root: PathBuf, options: DoctorOptions) {
         options.profiles,
         options.services,
     );
+    let ignored = apply_ignore_file(&mut results, &root, options.no_ignore_file);
     results.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
     let passed = results
         .iter()
@@ -595,6 +612,7 @@ fn run_doctor(root: PathBuf, options: DoctorOptions) {
         let report = DoctorReport {
             path: root.display().to_string(),
             passed,
+            ignored,
             steps: steps
                 .iter()
                 .map(|step| DoctorStepReport {
@@ -634,6 +652,12 @@ fn run_doctor(root: PathBuf, options: DoctorOptions) {
         println!(
             "\nNo blockers found. All {passed} checks passed — this repository looks ready for local development."
         );
+        if ignored > 0 {
+            println!(
+                "{ignored} check{} skipped via .loadoutignore",
+                if ignored == 1 { "" } else { "s" }
+            );
+        }
         return;
     }
     let mut opened = std::collections::HashSet::new();
@@ -678,6 +702,12 @@ fn run_doctor(root: PathBuf, options: DoctorOptions) {
     println!(
         "\n{passed} checks already pass. Loadout only reports findings; apply the steps above yourself."
     );
+    if ignored > 0 {
+        println!(
+            "{ignored} check{} skipped via .loadoutignore",
+            if ignored == 1 { "" } else { "s" }
+        );
+    }
     if failed > 0 {
         std::process::exit(1);
     }
@@ -705,6 +735,54 @@ fn profile_requirements(profile: Profile) -> Vec<Requirement> {
 
 fn matches_filter(item: &ResultItem, filter: &str) -> bool {
     item.name == filter || kind_name(&item.kind) == filter
+}
+
+/// Reads `.loadoutignore` from the repository root: one pattern per line,
+/// blank lines and `#` comments ignored. This is a small, repository-local
+/// list of intentional exceptions—not a place to configure how Loadout
+/// behaves at runtime.
+fn read_ignore_patterns(root: &Path) -> Vec<String> {
+    fs::read_to_string(root.join(".loadoutignore"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A pattern matches a `command`/`environment`/`dependency_state`/
+/// `connectivity` kind or an exact check name, same as `--only`/`--skip`.
+/// Patterns can also be scoped to a specific source with `name@source`,
+/// where `source` matches as a substring (useful for ignoring one check in
+/// one workspace member without ignoring it everywhere).
+fn matches_ignore_pattern(item: &ResultItem, pattern: &str) -> bool {
+    match pattern.split_once('@') {
+        Some((name, source_substring)) => {
+            item.name == name && item.source.contains(source_substring)
+        }
+        None => matches_filter(item, pattern),
+    }
+}
+
+/// Drops results matching `.loadoutignore` and returns how many were
+/// dropped, so callers can surface that count instead of silently hiding
+/// findings.
+fn apply_ignore_file(results: &mut Vec<ResultItem>, root: &Path, disabled: bool) -> usize {
+    if disabled {
+        return 0;
+    }
+    let patterns = read_ignore_patterns(root);
+    if patterns.is_empty() {
+        return 0;
+    }
+    let before = results.len();
+    results.retain(|item| {
+        !patterns
+            .iter()
+            .any(|pattern| matches_ignore_pattern(item, pattern))
+    });
+    before - results.len()
 }
 
 fn kind_name(kind: &Kind) -> &str {
@@ -1948,6 +2026,13 @@ fn print_human(report: &Report, color: bool, quiet: bool) {
         "\n{} passed, {} failed, {} warnings",
         report.passed, report.failed, report.warnings
     );
+    if report.ignored > 0 {
+        println!(
+            "{} check{} skipped via .loadoutignore",
+            report.ignored,
+            if report.ignored == 1 { "" } else { "s" }
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2305,5 +2390,62 @@ mod tests {
             annotation_escape("100% done\nnext line"),
             "100%25 done%0Anext line"
         );
+    }
+    #[test]
+    fn ignore_patterns_match_kind_name_or_scoped_source() {
+        let item = ResultItem {
+            status: Status::Fail,
+            kind: Kind::Environment,
+            name: "DATABASE_URL".into(),
+            constraint: None,
+            source: "packages/api/.env.example".into(),
+            found: None,
+            message: "missing".into(),
+        };
+        assert!(matches_ignore_pattern(&item, "DATABASE_URL"));
+        assert!(matches_ignore_pattern(&item, "environment"));
+        assert!(matches_ignore_pattern(&item, "DATABASE_URL@packages/api"));
+        assert!(!matches_ignore_pattern(&item, "DATABASE_URL@packages/web"));
+        assert!(!matches_ignore_pattern(&item, "command"));
+    }
+    #[test]
+    fn ignore_file_comments_and_blank_lines_are_skipped() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-ignorefile-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(".loadoutignore"),
+            "# a comment\n\nDATABASE_URL\n  \nconnectivity\n",
+        )
+        .unwrap();
+        let patterns = read_ignore_patterns(&directory);
+        assert_eq!(patterns, vec!["DATABASE_URL", "connectivity"]);
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn apply_ignore_file_can_be_disabled() {
+        let directory = std::env::temp_dir().join(format!(
+            "loadout-ignorefile-disable-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(".loadoutignore"), "DATABASE_URL\n").unwrap();
+        let mut results = vec![ResultItem {
+            status: Status::Fail,
+            kind: Kind::Environment,
+            name: "DATABASE_URL".into(),
+            constraint: None,
+            source: "src".into(),
+            found: None,
+            message: "missing".into(),
+        }];
+        let ignored = apply_ignore_file(&mut results, &directory, true);
+        assert_eq!(ignored, 0);
+        assert_eq!(results.len(), 1);
+
+        let ignored = apply_ignore_file(&mut results, &directory, false);
+        assert_eq!(ignored, 1);
+        assert!(results.is_empty());
+        fs::remove_dir_all(directory).unwrap();
     }
 }
