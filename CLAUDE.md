@@ -1,6 +1,6 @@
 # Loadout
 
-Loadout is a local, read-only, single-binary Rust CLI (`src/main.rs`) that checks whether a repository's development environment is ready: are the right runtimes and package managers installed, do their versions satisfy what the repo declares, are dependencies actually installed, and are required environment variables set. It never installs software, writes configuration files, or executes package-manager commands on your behalf — it only reads metadata the repository already has (`package.json`, `Cargo.toml`, `pyproject.toml`, lockfiles, `.env.example` variants, etc.) and reports pass/fail/warn results. The one deliberate exception is `--services`, an opt-in flag that makes network/local-socket connections to verify configured runtime dependencies (database URLs, Docker daemon, AWS identity) are reachable — every other code path is fully offline.
+Loadout is a local, read-only, single-binary Rust CLI (`src/`) that checks whether a repository's development environment is ready: are the right runtimes and package managers installed, do their versions satisfy what the repo declares, are dependencies actually installed, and are required environment variables set. It never installs software, writes configuration files, or executes package-manager commands on your behalf — it only reads metadata the repository already has (`package.json`, `Cargo.toml`, `pyproject.toml`, lockfiles, `.env.example` variants, etc.) and reports pass/fail/warn results. The one deliberate exception is `--services`, an opt-in flag that makes network/local-socket connections to verify configured runtime dependencies (database URLs, Docker daemon, AWS identity) are reachable — every other code path is fully offline.
 
 ## Commands
 
@@ -10,12 +10,23 @@ Loadout is a local, read-only, single-binary Rust CLI (`src/main.rs`) that check
 - `loadout completions <shell>` / `loadout man` — generate shell completions or a man page to stdout.
 - `action.yml` — a reusable composite GitHub Action so other repositories can run Loadout in CI via `uses: JacobRoedel/loadout@main` without installing Rust themselves.
 
-## Core architecture (`src/main.rs`)
+## Core architecture (`src/`)
 
-1. **`discover`** walks the repository (skipping `.git`, `node_modules`, `target`, venvs, build output, etc.) and returns a `Vec<Requirement>` built from whatever metadata it finds — engine/version constraints, package managers, workspace roots (npm/pnpm/Yarn/Bun/Cargo/uv workspaces, Turborepo), dependency-install state, and `.env*.example` variables.
-2. **`gather_results`** expands `--profile`/`--require` inputs on top of `discover`'s output, optionally adds `--services` connectivity requirements, and evaluates every `Requirement` into a `ResultItem` (pass/fail/warn + message). Shared by `check` and `doctor` so both commands see identical results.
-3. **`evaluate`** dispatches by `Kind` (`Command`, `Environment`, `DependencyState`, `Connectivity`) to run the actual check — locating a binary on `PATH` and comparing its `--version` output against a `semver` constraint, checking an environment variable is non-empty, or dialing a host:port.
-4. Filtering layers apply in this order: `.loadoutignore` (persistent repo-local exceptions) → `--only`/`--skip` (invocation-scoped) → `--changed` (git-diff scoped).
+`main.rs` only parses the CLI and dispatches to a subcommand runner; each concern below lives in its own module (all `pub(crate)`, no `lib.rs` — this is a single binary crate):
+
+- **`model.rs`** — the shared data types (`Requirement`, `ResultItem`, `Kind`, `Status`, `Report`, `CheckOptions`/`DoctorOptions`, etc.) and their small constructors (`command`, `warn`, `display`). Every other module depends on this one.
+- **`cli.rs`** — the `clap` `Cli`/`Commands`/`Shell`/`Profile` definitions only.
+- **`discover.rs`** walks the repository (skipping `.git`, `node_modules`, `target`, venvs, build output, etc.) and returns a `Vec<Requirement>` built from whatever metadata it finds — engine/version constraints, package managers, workspace roots (npm/pnpm/Yarn/Bun/Cargo/uv workspaces, Turborepo), dependency-install state. Per-ecosystem detectors (Node, Rust, Python, Go, Ruby, Java, asdf/mise, pre-commit) live here too.
+- **`dotenv.rs`** — `.env*.example`/`.sample`/`.template` discovery and parsing, plus reading local `.env*`/`.envrc` values.
+- **`connectivity.rs`** — the opt-in `--services` checks (database/cache URL reachability, Docker daemon, AWS identity).
+- **`evaluate.rs`** — `evaluate` dispatches by `Kind` (`Command`, `Environment`, `DependencyState`, `Connectivity`) to run the actual check: locating a binary on `PATH` and comparing its `--version` output against a `semver` constraint (delegating `Connectivity` to `connectivity.rs`), checking an environment variable is non-empty, etc. Version normalization/matching and `--require` parsing live here too.
+- **`scripts.rs`** — the `init`-only, non-validating scan for npm scripts, Makefile/Justfile/Taskfile targets, and Compose services.
+- **`ignore_file.rs`** — `.loadoutignore` parsing and filtering, shared by `check` and `doctor`.
+- **`check.rs`** — **`gather_results`** expands `--profile`/`--require` inputs on top of `discover`'s output, optionally adds `--services` connectivity requirements, and evaluates every `Requirement` into a `ResultItem`. Shared by `check` and `doctor` so both commands see identical results. Also owns `run_check` and the human/annotation output for `check`.
+- **`doctor.rs`** / **`init.rs`** — the `doctor` and `init` subcommand runners.
+- **`tests.rs`** — the crate's unit tests, kept in one module (rather than split per-file) since many tests exercise several modules together.
+
+Filtering layers apply in this order: `.loadoutignore` (persistent repo-local exceptions) → `--only`/`--skip` (invocation-scoped) → `--changed` (git-diff scoped).
 
 ## Verification commands
 
