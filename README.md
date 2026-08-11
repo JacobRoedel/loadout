@@ -51,9 +51,22 @@ Failures mean a required command, version, or environment variable is missing. W
 | Ruby | `.ruby-version`, `Gemfile`, `Gemfile.lock` | Ruby, Bundler, and a `bundle install` warning when `.bundle/config` declares a local vendor path that's missing |
 | Infrastructure | `Dockerfile`, Compose files, Terraform `.tf` files | Docker, Terraform |
 | Data tooling | `postgresql.conf`, `.psqlrc`, `redis.conf`, `.rediscli_history` | `psql`, `redis-cli` |
-| Environment | Root `.env.example` and `.env.sample` | Required non-empty environment variables |
+| Environment | Root `.env*.example`, `.env*.sample`, `.env*.template` | Non-empty environment variables, required unless marked optional |
 
-Environment variables are satisfied by a non-empty shell value or a root `.env` / `.env.local` value. Values are never printed or included in JSON output.
+### Environment file awareness
+
+Loadout recognizes every root-level file matching `.env*.example`, `.env*.sample`, or `.env*.template`—not just `.env.example`, but framework and platform variants like `.env.development.example`, `.env.test.example`, or `.env.local.example` too.
+
+Variables are satisfied by a non-empty shell value or a value from any root `.env`, `.env.local`, `.env.development[.local]`, `.env.test[.local]`, or `.env.production[.local]` file. Values are never printed or included in JSON output.
+
+A variable is treated as **optional** (a WARN instead of a FAIL when unset) only when the example file explicitly says so—Loadout never infers it from a placeholder value being present, since `API_KEY=your-key-here` is a common convention for required variables too. Mark a variable optional with a comment containing the word "optional," either on the line above it or trailing the line itself:
+
+```sh
+# Optional: defaults to 3000 if not set
+PORT=
+
+API_KEY=your-key-here # optional
+```
 
 ### Workspaces and monorepos
 

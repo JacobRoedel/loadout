@@ -1543,35 +1543,91 @@ fn pyproject_requirements(path: &Path) -> Vec<Requirement> {
     vec![command("python", constraint, display(path), true)]
 }
 
+/// Discovers required (and, where the file says so, optional) environment
+/// variables from every `.env*.example`/`.env*.sample`/`.env*.template` file
+/// at the repository root—covering not just `.env.example` but framework
+/// and platform variants like `.env.development.example` or
+/// `.env.local.example`.
 fn env_requirements(root: &Path) -> Vec<Requirement> {
-    [".env.example", ".env.sample"]
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut example_files: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
+        .map(|entry| entry.path())
+        .filter(|path| is_env_example_file(path))
+        .collect();
+    example_files.sort();
+    example_files
         .iter()
-        .flat_map(|file| {
-            let path = root.join(file);
-            let source = display(&path);
-            fs::read_to_string(path)
-                .unwrap_or_default()
-                .lines()
-                .filter_map(move |line| {
-                    let line = line.trim().trim_start_matches("export ").trim();
-                    let name = line.split_once('=')?.0.trim();
-                    (!name.is_empty() && !name.starts_with('#')).then(|| Requirement {
-                        kind: Kind::Environment,
-                        name: name.into(),
-                        constraint: None,
-                        source: source.clone(),
-                        required: true,
-                        message: None,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
+        .flat_map(|path| parse_env_example(&fs::read_to_string(path).unwrap_or_default(), path))
         .collect()
+}
+
+fn is_env_example_file(path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    name.starts_with(".env")
+        && (name.ends_with(".example") || name.ends_with(".sample") || name.ends_with(".template"))
+}
+
+/// A variable is treated as optional only when the file explicitly says
+/// so—either a trailing `# optional` comment on its own line, or an
+/// `# optional ...` comment on the line directly above it. Loadout never
+/// infers "optional" just because an example value is present, since
+/// placeholder values (`API_KEY=your-key-here`) are common for required
+/// variables too.
+fn parse_env_example(contents: &str, path: &Path) -> Vec<Requirement> {
+    let source = display(path);
+    let mut found = Vec::new();
+    let mut preceding_comment_optional = false;
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(comment) = line.strip_prefix('#') {
+            preceding_comment_optional = comment.to_lowercase().contains("optional");
+            continue;
+        }
+        let line = line.trim_start_matches("export ").trim();
+        let Some((name, rest)) = line.split_once('=') else {
+            preceding_comment_optional = false;
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            preceding_comment_optional = false;
+            continue;
+        }
+        let inline_optional = rest
+            .split_once('#')
+            .is_some_and(|(_, comment)| comment.to_lowercase().contains("optional"));
+        found.push(Requirement {
+            kind: Kind::Environment,
+            name: name.into(),
+            constraint: None,
+            source: source.clone(),
+            required: !(preceding_comment_optional || inline_optional),
+            message: None,
+        });
+        preceding_comment_optional = false;
+    }
+    found
 }
 
 fn read_local_env(root: &Path) -> HashMap<String, String> {
     let mut values = HashMap::new();
-    for file in [".env", ".env.local"] {
+    for file in [
+        ".env",
+        ".env.local",
+        ".env.development",
+        ".env.development.local",
+        ".env.test",
+        ".env.test.local",
+        ".env.production",
+        ".env.production.local",
+    ] {
         if let Ok(contents) = fs::read_to_string(root.join(file)) {
             for line in contents.lines() {
                 let line = line.trim().trim_start_matches("export ").trim();
@@ -1751,8 +1807,17 @@ fn evaluate(
                 .ok()
                 .or_else(|| env_values.get(&requirement.name).cloned());
             let present = value.is_some_and(|v| !v.is_empty());
+            let missing_status = if requirement.required {
+                Status::Fail
+            } else {
+                Status::Warn
+            };
             ResultItem {
-                status: if present { Status::Pass } else { Status::Fail },
+                status: if present {
+                    Status::Pass
+                } else {
+                    missing_status
+                },
                 kind: Kind::Environment,
                 name: requirement.name.clone(),
                 constraint: None,
@@ -1760,8 +1825,10 @@ fn evaluate(
                 found: present.then(|| "set".into()),
                 message: if present {
                     "Environment variable is set".into()
-                } else {
+                } else if requirement.required {
                     "Set this environment variable in your shell or local .env file".into()
+                } else {
+                    "Optional environment variable is not set".into()
                 },
             }
         }
@@ -2568,5 +2635,59 @@ mod tests {
                 .contains("bundle install")
         );
         fs::remove_dir_all(&directory).unwrap();
+    }
+    #[test]
+    fn env_example_file_recognition_covers_platform_variants() {
+        for name in [
+            ".env.example",
+            ".env.sample",
+            ".env.template",
+            ".env.development.example",
+            ".env.local.example",
+            ".env.production.sample",
+        ] {
+            assert!(
+                is_env_example_file(Path::new(name)),
+                "{name} should be recognized"
+            );
+        }
+        for name in [".env", ".env.local", ".env.development", "example.env"] {
+            assert!(
+                !is_env_example_file(Path::new(name)),
+                "{name} should not be recognized"
+            );
+        }
+    }
+    #[test]
+    fn optional_variables_require_an_explicit_marker() {
+        let contents = "DATABASE_URL=\n# Optional: has a sane default\nPORT=\nAPI_KEY=placeholder # optional\nPLACEHOLDER=fake-value-here\n";
+        let requirements = parse_env_example(contents, Path::new(".env.example"));
+        let required = |name: &str| {
+            requirements
+                .iter()
+                .find(|r| r.name == name)
+                .unwrap()
+                .required
+        };
+        assert!(required("DATABASE_URL"));
+        assert!(!required("PORT"));
+        assert!(!required("API_KEY"));
+        assert!(
+            required("PLACEHOLDER"),
+            "a present example value alone must not imply optional"
+        );
+    }
+    #[test]
+    fn optional_environment_variables_warn_instead_of_fail() {
+        let requirement = Requirement {
+            kind: Kind::Environment,
+            name: "PORT".into(),
+            constraint: None,
+            source: ".env.example".into(),
+            required: false,
+            message: None,
+        };
+        let result = evaluate(&requirement, Path::new("."), &HashMap::new());
+        assert!(matches!(result.status, Status::Warn));
     }
 }
