@@ -1148,6 +1148,12 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
             "go.mod" => {
                 found.push(command("go", go_mod_constraint(path), display(path), true));
             }
+            ".tool-versions" => {
+                found.extend(tool_versions_requirements(path));
+            }
+            "mise.toml" | ".mise.toml" => {
+                found.extend(mise_requirements(path));
+            }
             "pom.xml" | "build.gradle" | "build.gradle.kts" | "gradlew" => {
                 found.push(command("java", None, display(path), true));
             }
@@ -1469,6 +1475,98 @@ fn node_lockfile_health(path: &Path, declared_manager: &str, diagnostics: &mut V
             });
         }
     }
+}
+
+/// Maps a well-known asdf/mise plugin name to the command Loadout already
+/// checks for that ecosystem. Unrecognized plugins are skipped rather than
+/// guessed at, to avoid noisy checks for tools Loadout can't evaluate.
+fn version_manager_tool_name(plugin: &str) -> Option<&'static str> {
+    match plugin.to_lowercase().as_str() {
+        "nodejs" | "node" => Some("node"),
+        "python" | "python3" => Some("python"),
+        "ruby" => Some("ruby"),
+        "golang" | "go" => Some("go"),
+        "rust" | "rustc" => Some("rustc"),
+        "java" | "temurin" | "openjdk" | "adoptopenjdk" | "zulu" | "corretto" => Some("java"),
+        "terraform" => Some("terraform"),
+        "yarn" => Some("yarn"),
+        "pnpm" => Some("pnpm"),
+        "bun" => Some("bun"),
+        _ => None,
+    }
+}
+
+/// A pinned version like "system" or "latest" isn't a version Loadout can
+/// check a local install against.
+fn is_checkable_version(version: &str) -> bool {
+    !matches!(version, "system" | "latest" | "" | "ref:master")
+}
+
+fn version_manager_requirement(tool: &str, version: &str, source: String) -> Vec<Requirement> {
+    let constraint = version
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit())
+        .then(|| normalize_exact(version));
+    let mut found = vec![command(tool, constraint.clone(), source.clone(), true)];
+    if tool == "rustc" {
+        found.push(command("cargo", constraint, source, true));
+    }
+    found
+}
+
+/// Parses asdf's `.tool-versions`: one `<plugin> <version>` pair per line,
+/// with `#` comments and multiple space-separated versions (asdf tries them
+/// in order; Loadout checks the first) supported.
+fn tool_versions_requirements(path: &Path) -> Vec<Requirement> {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter_map(|line| {
+            let line = line.split('#').next().unwrap_or("").trim();
+            let mut parts = line.split_whitespace();
+            let plugin = parts.next()?;
+            let version = parts.next()?;
+            let tool = version_manager_tool_name(plugin)?;
+            is_checkable_version(version)
+                .then(|| version_manager_requirement(tool, version, display(path)))
+        })
+        .flatten()
+        .collect()
+}
+
+/// Parses mise's `[tools]` table from `mise.toml`/`.mise.toml`. A tool's
+/// version may be a bare string, an array (mise tries them in order), or a
+/// table with a `version` key.
+fn mise_requirements(path: &Path) -> Vec<Requirement> {
+    let Some(toml::Value::Table(tools)) = fs::read_to_string(path)
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+        .and_then(|v| v.get("tools").cloned())
+    else {
+        return Vec::new();
+    };
+    tools
+        .iter()
+        .filter_map(|(plugin, version_value)| {
+            let tool = version_manager_tool_name(plugin)?;
+            let version = match version_value {
+                toml::Value::String(s) => Some(s.clone()),
+                toml::Value::Array(items) => {
+                    items.first().and_then(|v| v.as_str()).map(str::to_owned)
+                }
+                toml::Value::Table(t) => {
+                    t.get("version").and_then(|v| v.as_str()).map(str::to_owned)
+                }
+                _ => None,
+            }?;
+            is_checkable_version(&version)
+                .then(|| version_manager_requirement(tool, &version, display(path)))
+        })
+        .flatten()
+        .collect()
 }
 
 fn rust_toolchain_requirements(path: &Path) -> Vec<Requirement> {
@@ -2689,5 +2787,45 @@ mod tests {
         };
         let result = evaluate(&requirement, Path::new("."), &HashMap::new());
         assert!(matches!(result.status, Status::Warn));
+    }
+    #[test]
+    fn tool_versions_maps_known_plugins_and_skips_unpinned() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-tool-versions-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(".tool-versions");
+        fs::write(
+            &path,
+            "# comment\nnodejs 20.11.0\nruby system\nrust 1.75.0\nunknown-plugin 1.2.3\n",
+        )
+        .unwrap();
+        let found = tool_versions_requirements(&path);
+        let names: Vec<_> = found.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"node"));
+        assert!(names.contains(&"rustc"));
+        assert!(names.contains(&"cargo"), "rust plugin implies cargo too");
+        assert!(!names.contains(&"ruby"), "system version is not checkable");
+        assert_eq!(found.len(), 3);
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn mise_toml_reads_string_array_and_table_versions() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-mise-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("mise.toml");
+        fs::write(
+            &path,
+            "[tools]\nnode = \"20.11.0\"\npython = [\"3.12.1\", \"3.11.0\"]\ngo = { version = \"1.22.0\" }\nterraform = \"latest\"\n",
+        )
+        .unwrap();
+        let found = mise_requirements(&path);
+        let names: Vec<_> = found.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"node"));
+        assert!(names.contains(&"go"));
+        assert!(!names.contains(&"terraform"), "latest is not checkable");
+        let python = found.iter().find(|r| r.name == "python").unwrap();
+        assert_eq!(python.constraint.as_deref(), Some("=3.12.1"));
+        fs::remove_dir_all(directory).unwrap();
     }
 }
