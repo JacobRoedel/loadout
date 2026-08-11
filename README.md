@@ -45,10 +45,10 @@ Failures mean a required command, version, or environment variable is missing. W
 | --- | --- | --- |
 | Node.js | `package.json` engines, `packageManager`, Volta, `.nvmrc`, `.node-version`, npm/pnpm/Yarn/Bun lockfiles | Node, declared package manager, dependency-install warning |
 | Rust | `Cargo.toml`, `rust-toolchain`, `rust-toolchain.toml` | `rustc`, `cargo`, build-artifact warning |
-| Python | `pyproject.toml`, `.python-version`, requirements files, uv/Poetry/Pipenv lockfiles | Python, applicable package tool, virtualenv warning |
+| Python | `pyproject.toml`, `.python-version`, requirements files, uv/Poetry/Pipenv lockfiles | Python, applicable package tool, virtualenv warning with a tool-matched install command (`uv sync`, `poetry install`, `pipenv install`, `pip install -r <file>`, or `pip install -e .`) |
 | Go | `go.mod` | Go and its declared minimum version |
 | Java | Maven `pom.xml`, Gradle files/wrapper | Java |
-| Ruby | `.ruby-version`, `Gemfile`, `Gemfile.lock` | Ruby, Bundler |
+| Ruby | `.ruby-version`, `Gemfile`, `Gemfile.lock` | Ruby, Bundler, and a `bundle install` warning when `.bundle/config` declares a local vendor path that's missing |
 | Infrastructure | `Dockerfile`, Compose files, Terraform `.tf` files | Docker, Terraform |
 | Data tooling | `postgresql.conf`, `.psqlrc`, `redis.conf`, `.rediscli_history` | `psql`, `redis-cli` |
 | Environment | Root `.env.example` and `.env.sample` | Required non-empty environment variables |
