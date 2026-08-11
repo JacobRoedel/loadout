@@ -55,6 +55,10 @@ Failures mean a required command, version, or environment variable is missing. W
 
 Environment variables are satisfied by a non-empty shell value or a root `.env` / `.env.local` value. Values are never printed or included in JSON output.
 
+### Workspaces and monorepos
+
+Loadout recognizes npm/Yarn/Bun workspaces (`package.json` `workspaces`), pnpm workspaces (`pnpm-workspace.yaml`), Cargo workspaces (`Cargo.toml` `[workspace]`), uv workspaces (`pyproject.toml` `[tool.uv.workspace]`), and Turborepo (`turbo.json`). When a workspace root is detected, the dependency-install and build-artifact checks run once at the true root instead of once per member package, and the recommended install command reflects the workspace's package manager (for example `pnpm install --frozen-lockfile` run from the workspace root).
+
 ## Add one-off checks
 
 Use repeatable `--require` flags for requirements that are not represented in repository metadata:
