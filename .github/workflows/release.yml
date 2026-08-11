@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (for a test run); does not publish a release'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross_linker: aarch64-linux-gnu-gcc
+            cross_package: gcc-aarch64-linux-gnu
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross-compilation linker
+        if: matrix.cross_package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.cross_package }}
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=${{ matrix.cross_linker }}" >> "$GITHUB_ENV"
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          staging="loadout-${{ matrix.target }}"
+          mkdir "$staging"
+          cp "target/${{ matrix.target }}/release/loadout" "$staging/"
+          cp README.md LICENSE "$staging/" 2>/dev/null || cp README.md "$staging/"
+          tar czf "$staging.tar.gz" "$staging"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          staging="loadout-${{ matrix.target }}"
+          mkdir "$staging"
+          cp "target/${{ matrix.target }}/release/loadout.exe" "$staging/"
+          cp README.md "$staging/"
+          7z a "$staging.zip" "$staging"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loadout-${{ matrix.target }}
+          path: |
+            loadout-${{ matrix.target }}.tar.gz
+            loadout-${{ matrix.target }}.zip
+          if-no-files-found: ignore
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum ./* > checksums.txt
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -31,15 +31,57 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # Tagged releases (version: v1.2.3) ship prebuilt binaries on Linux and
+    # macOS runners, which is much faster than building from source. Windows
+    # runners, and any non-release ref (branches, commits, "main"), always
+    # fall back to building from source below.
+    - name: Try downloading a prebuilt Loadout binary
+      id: prebuilt
+      shell: bash
+      env:
+        LOADOUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -uo pipefail
+        found="false"
+        if [ "$RUNNER_OS" != "Windows" ]; then
+          case "$LOADOUT_VERSION" in
+            v[0-9]*)
+              case "$(uname -s)-$(uname -m)" in
+                Linux-x86_64) target="x86_64-unknown-linux-gnu" ;;
+                Linux-aarch64) target="aarch64-unknown-linux-gnu" ;;
+                Darwin-x86_64) target="x86_64-apple-darwin" ;;
+                Darwin-arm64) target="aarch64-apple-darwin" ;;
+                *) target="" ;;
+              esac
+              if [ -n "$target" ]; then
+                url="https://github.com/JacobRoedel/loadout/releases/download/${LOADOUT_VERSION}/loadout-${target}.tar.gz"
+                mkdir -p .loadout-bin
+                if curl -fsSL "$url" -o .loadout-bin/loadout.tar.gz; then
+                  tar xzf .loadout-bin/loadout.tar.gz -C .loadout-bin
+                  bin_path="$(find .loadout-bin -type f -name loadout | head -n 1)"
+                  if [ -n "$bin_path" ]; then
+                    chmod +x "$bin_path"
+                    echo "bin=$bin_path" >> "$GITHUB_OUTPUT"
+                    found="true"
+                  fi
+                fi
+              fi
+              ;;
+          esac
+        fi
+        echo "found=$found" >> "$GITHUB_OUTPUT"
     - name: Checkout Loadout source
+      if: steps.prebuilt.outputs.found != 'true'
       uses: actions/checkout@v4
       with:
         repository: JacobRoedel/loadout
         ref: ${{ inputs.version }}
         path: .loadout-action-src
     - name: Install Rust toolchain
+      if: steps.prebuilt.outputs.found != 'true'
       uses: dtolnay/rust-toolchain@stable
-    - name: Build Loadout
+    - name: Build Loadout from source
+      if: steps.prebuilt.outputs.found != 'true'
       shell: bash
       run: cargo build --release --locked --manifest-path .loadout-action-src/Cargo.toml
     - name: Run loadout check
@@ -50,6 +92,7 @@ runs:
         LOADOUT_STRICT: ${{ inputs.strict }}
         LOADOUT_SERVICES: ${{ inputs.services }}
         LOADOUT_CHANGED: ${{ inputs.changed }}
+        LOADOUT_BIN: ${{ steps.prebuilt.outputs.found == 'true' && steps.prebuilt.outputs.bin || '.loadout-action-src/target/release/loadout' }}
       run: |
         set -euo pipefail
         args=(check "$LOADOUT_PATH" --annotate)
@@ -65,4 +108,4 @@ runs:
         if [ -n "$LOADOUT_CHANGED" ]; then
           args+=(--changed "$LOADOUT_CHANGED")
         fi
-        .loadout-action-src/target/release/loadout "${args[@]}"
+        "$LOADOUT_BIN" "${args[@]}"
