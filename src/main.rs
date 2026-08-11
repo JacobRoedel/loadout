@@ -1154,6 +1154,9 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
             "mise.toml" | ".mise.toml" => {
                 found.extend(mise_requirements(path));
             }
+            ".pre-commit-config.yaml" | ".pre-commit-config.yml" => {
+                found.extend(pre_commit_requirements(path));
+            }
             "pom.xml" | "build.gradle" | "build.gradle.kts" | "gradlew" => {
                 found.push(command("java", None, display(path), true));
             }
@@ -1567,6 +1570,28 @@ fn mise_requirements(path: &Path) -> Vec<Requirement> {
         })
         .flatten()
         .collect()
+}
+
+/// A `.pre-commit-config.yaml` requires the `pre-commit` tool itself, plus a
+/// warning if hooks haven't been installed. `.git/hooks/pre-commit` is the
+/// actual marker `pre-commit install` writes; it's only checked when the
+/// config sits at a real git repository root, since that's the only place
+/// the marker could exist.
+fn pre_commit_requirements(path: &Path) -> Vec<Requirement> {
+    let source = display(path);
+    let mut found = vec![command("pre-commit", None, source.clone(), true)];
+    let project = path.parent().expect("config file has a parent");
+    if project.join(".git").is_dir() && !project.join(".git/hooks/pre-commit").exists() {
+        found.push(Requirement {
+            kind: Kind::DependencyState,
+            name: "pre-commit hooks".into(),
+            constraint: None,
+            source,
+            required: false,
+            message: Some("Git hooks are not installed; run `pre-commit install`".into()),
+        });
+    }
+    found
 }
 
 fn rust_toolchain_requirements(path: &Path) -> Vec<Requirement> {
@@ -2826,6 +2851,29 @@ mod tests {
         assert!(!names.contains(&"terraform"), "latest is not checkable");
         let python = found.iter().find(|r| r.name == "python").unwrap();
         assert_eq!(python.constraint.as_deref(), Some("=3.12.1"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn pre_commit_hook_warning_requires_a_real_git_repo() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-pre-commit-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let config = directory.join(".pre-commit-config.yaml");
+        fs::write(&config, "repos: []\n").unwrap();
+
+        let found = pre_commit_requirements(&config);
+        assert_eq!(found.len(), 1, "no .git means no hook-installed signal");
+        assert_eq!(found[0].name, "pre-commit");
+
+        fs::create_dir_all(directory.join(".git/hooks")).unwrap();
+        let found = pre_commit_requirements(&config);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[1].name, "pre-commit hooks");
+
+        fs::write(directory.join(".git/hooks/pre-commit"), "").unwrap();
+        let found = pre_commit_requirements(&config);
+        assert_eq!(found.len(), 1, "hook installed means no warning");
+
         fs::remove_dir_all(directory).unwrap();
     }
 }
