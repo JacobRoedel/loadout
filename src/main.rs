@@ -1157,6 +1157,9 @@ fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> 
             ".pre-commit-config.yaml" | ".pre-commit-config.yml" => {
                 found.extend(pre_commit_requirements(path));
             }
+            ".envrc" => {
+                found.push(command("direnv", None, display(path), true));
+            }
             "pom.xml" | "build.gradle" | "build.gradle.kts" | "gradlew" => {
                 found.push(command("java", None, display(path), true));
             }
@@ -1741,6 +1744,11 @@ fn parse_env_example(contents: &str, path: &Path) -> Vec<Requirement> {
 
 fn read_local_env(root: &Path) -> HashMap<String, String> {
     let mut values = HashMap::new();
+    // .envrc is a shell script, not a plain KEY=VALUE file, but its most
+    // common lines (`export KEY=VALUE`) parse the same naive way as .env
+    // does. Loadout does not evaluate shell expressions, so lines beyond
+    // simple assignments (`use flake`, conditionals, `layout python`) are
+    // ignored or, rarely, produce a harmless bogus key.
     for file in [
         ".env",
         ".env.local",
@@ -1750,6 +1758,7 @@ fn read_local_env(root: &Path) -> HashMap<String, String> {
         ".env.test.local",
         ".env.production",
         ".env.production.local",
+        ".envrc",
     ] {
         if let Ok(contents) = fs::read_to_string(root.join(file)) {
             for line in contents.lines() {
@@ -2874,6 +2883,23 @@ mod tests {
         let found = pre_commit_requirements(&config);
         assert_eq!(found.len(), 1, "hook installed means no warning");
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn envrc_values_are_readable_alongside_env_files() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-envrc-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(".envrc"),
+            "export DATABASE_URL=postgres://localhost/dev\nuse flake\n",
+        )
+        .unwrap();
+        let values = read_local_env(&directory);
+        assert_eq!(
+            values.get("DATABASE_URL").map(String::as_str),
+            Some("postgres://localhost/dev")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 }

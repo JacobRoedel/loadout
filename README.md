@@ -59,7 +59,7 @@ Failures mean a required command, version, or environment variable is missing. W
 
 Loadout recognizes every root-level file matching `.env*.example`, `.env*.sample`, or `.env*.template`—not just `.env.example`, but framework and platform variants like `.env.development.example`, `.env.test.example`, or `.env.local.example` too.
 
-Variables are satisfied by a non-empty shell value or a value from any root `.env`, `.env.local`, `.env.development[.local]`, `.env.test[.local]`, or `.env.production[.local]` file. Values are never printed or included in JSON output.
+Variables are satisfied by a non-empty shell value or a value from any root `.env`, `.env.local`, `.env.development[.local]`, `.env.test[.local]`, `.env.production[.local]`, or [direnv](https://direnv.net/)'s `.envrc` file. Values are never printed or included in JSON output. A root-level `.envrc` also adds a `direnv` command requirement. Loadout does not evaluate shell expressions—`.envrc` is scanned for simple `KEY=VALUE`/`export KEY=VALUE` lines the same way `.env` files are, so constructs beyond plain assignments (`use flake`, conditionals, `layout python`) are ignored.
 
 A variable is treated as **optional** (a WARN instead of a FAIL when unset) only when the example file explicitly says so—Loadout never infers it from a placeholder value being present, since `API_KEY=your-key-here` is a common convention for required variables too. Mark a variable optional with a comment containing the word "optional," either on the line above it or trailing the line itself:
 
