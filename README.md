@@ -142,6 +142,22 @@ loadout init --json
 
 It writes no files and does not make its output a required input to Loadout.
 
+## Guided remediation with `loadout doctor`
+
+`loadout doctor` runs the same checks as `loadout check`, then groups every blocker into ordered steps instead of a flat list:
+
+```sh
+loadout doctor
+loadout doctor --json
+loadout doctor --open-docs
+```
+
+1. **Install missing tools and fix version mismatches** — nothing else can succeed until these are resolved.
+2. **Install project dependencies** — npm/pnpm/yarn/bun/cargo/pip installs, using the same install-command recommendation as `check`.
+3. **Configure environment variables** — usually the last thing you set before running the app.
+
+Each blocker lists a documentation link for the missing tool. Pass `--open-docs` to open each unique link in your default browser instead of just printing it. Like every other Loadout command, `doctor` never installs anything or writes files—it only reports and links out.
+
 ## Shell completions and man page
 
 Generate integrations to stdout and place them where your shell expects them:
