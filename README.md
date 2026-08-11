@@ -4,7 +4,7 @@
 
 Loadout is a local, read-only development-environment readiness checker. Run it from a repository to learn whether the runtimes, package managers, environment variables, and basic dependency state needed for development are present.
 
-It discovers requirements from metadata your repository already has. Loadout does not require or create a Loadout YAML/configuration file, install software, execute package-manager install commands, or make network requests while checking a repository.
+It discovers requirements from metadata your repository already has. Loadout does not require or create a Loadout YAML/configuration file, install software, execute package-manager install commands, or make network requests while checking a repository, unless you explicitly opt in with `--services` (see [Service connectivity checks](#service-connectivity-checks)).
 
 ## Install and run
 
@@ -58,6 +58,21 @@ Environment variables are satisfied by a non-empty shell value or a root `.env` 
 ### Workspaces and monorepos
 
 Loadout recognizes npm/Yarn/Bun workspaces (`package.json` `workspaces`), pnpm workspaces (`pnpm-workspace.yaml`), Cargo workspaces (`Cargo.toml` `[workspace]`), uv workspaces (`pyproject.toml` `[tool.uv.workspace]`), and Turborepo (`turbo.json`). When a workspace root is detected, the dependency-install and build-artifact checks run once at the true root instead of once per member package, and the recommended install command reflects the workspace's package manager (for example `pnpm install --frozen-lockfile` run from the workspace root).
+
+### Service connectivity checks
+
+Pass `--services` to `check` or `doctor` to additionally verify that configured runtime dependencies are reachable. This is the one Loadout mode that makes network or local-socket connections, so it is opt-in and never runs by default:
+
+```sh
+loadout check --services
+loadout doctor --services
+```
+
+- **Database and cache URLs** — any environment variable (shell or `.env`/`.env.local`) whose value starts with `postgres://`, `postgresql://`, `mysql://`, `redis://`, `rediss://`, `mongodb://`, or `amqp://` is dialed with a 2-second TCP connection attempt to its host and port.
+- **Docker daemon** — checked with `docker info` when the repository already has Docker signals (a `Dockerfile` or Compose file).
+- **AWS identity** — checked with `aws sts get-caller-identity` when the `aws` CLI is on `PATH` and credentials are configured (`AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, or `~/.aws/credentials`/`~/.aws/config`).
+
+Every connectivity check only ever reports pass/warn status plus the host and port it dialed. Credentials, full connection strings, and command output are never printed or included in JSON output.
 
 ## Add one-off checks
 
@@ -117,7 +132,7 @@ loadout check --quiet
 loadout check --strict
 ```
 
-- `--only <kind|name>` includes checks that match `command`, `environment`, `dependency_state`, or an exact check name. Repeat it to include several filters.
+- `--only <kind|name>` includes checks that match `command`, `environment`, `dependency_state`, `connectivity`, or an exact check name. Repeat it to include several filters.
 - `--skip <kind|name>` excludes matching checks. Repeat it as needed.
 - `--quiet` hides passing results in human output and prints nothing when every selected check passes.
 - `--no-color` disables ANSI color codes.

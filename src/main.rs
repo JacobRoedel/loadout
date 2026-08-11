@@ -7,8 +7,10 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     env, fs, io,
+    net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 use walkdir::{DirEntry, WalkDir};
 
@@ -41,10 +43,10 @@ enum Commands {
         /// Disable ANSI colors in human output
         #[arg(long)]
         no_color: bool,
-        /// Include only checks matching a kind (command, environment, dependency_state) or name
+        /// Include only checks matching a kind (command, environment, dependency_state, connectivity) or name
         #[arg(long, value_name = "FILTER")]
         only: Vec<String>,
-        /// Exclude checks matching a kind (command, environment, dependency_state) or name
+        /// Exclude checks matching a kind (command, environment, dependency_state, connectivity) or name
         #[arg(long, value_name = "FILTER")]
         skip: Vec<String>,
         /// Treat warnings as failures for this invocation
@@ -53,6 +55,9 @@ enum Commands {
         /// Suppress passing checks in human output
         #[arg(long, conflicts_with = "json")]
         quiet: bool,
+        /// Also verify configured services are reachable (makes network connections; opt-in)
+        #[arg(long)]
+        services: bool,
     },
     /// Print an advisory summary of detected requirements without creating files
     Init {
@@ -81,6 +86,9 @@ enum Commands {
         /// Open each missing tool's install docs in your browser
         #[arg(long)]
         open_docs: bool,
+        /// Also verify configured services are reachable (makes network connections; opt-in)
+        #[arg(long)]
+        services: bool,
     },
     /// Generate shell completion scripts to stdout
     Completions {
@@ -116,6 +124,7 @@ enum Kind {
     Command,
     Environment,
     DependencyState,
+    Connectivity,
 }
 
 #[derive(Clone, Debug)]
@@ -165,6 +174,7 @@ struct CheckOptions {
     skip: Vec<String>,
     strict: bool,
     quiet: bool,
+    services: bool,
 }
 
 struct DoctorOptions {
@@ -173,6 +183,7 @@ struct DoctorOptions {
     json: bool,
     no_color: bool,
     open_docs: bool,
+    services: bool,
 }
 
 #[derive(Serialize)]
@@ -201,6 +212,7 @@ fn main() {
             skip,
             strict,
             quiet,
+            services,
         }) => run_check(
             resolve_root(path),
             CheckOptions {
@@ -212,6 +224,7 @@ fn main() {
                 skip,
                 strict,
                 quiet,
+                services,
             },
         ),
         Some(Commands::Init { path, json }) => run_init(resolve_root(path), json),
@@ -222,6 +235,7 @@ fn main() {
             json,
             no_color,
             open_docs,
+            services,
         }) => run_doctor(
             resolve_root(path),
             DoctorOptions {
@@ -230,6 +244,7 @@ fn main() {
                 json,
                 no_color,
                 open_docs,
+                services,
             },
         ),
         Some(Commands::Completions { shell }) => run_completions(shell),
@@ -279,6 +294,7 @@ fn gather_results(
     root: &Path,
     requirements: Vec<String>,
     profiles: Vec<Profile>,
+    services: bool,
 ) -> Vec<ResultItem> {
     let mut diagnostics = Vec::new();
     let mut requirements_found = discover(root, &mut diagnostics);
@@ -295,6 +311,9 @@ fn gather_results(
         }
     }
     let env_values = read_local_env(root);
+    if services {
+        requirements_found.extend(connectivity_requirements(&requirements_found, &env_values));
+    }
     let mut results: Vec<_> = requirements_found
         .iter()
         .map(|r| evaluate(r, root, &env_values))
@@ -304,7 +323,12 @@ fn gather_results(
 }
 
 fn run_check(root: PathBuf, options: CheckOptions) {
-    let mut results = gather_results(&root, options.requirements, options.profiles);
+    let mut results = gather_results(
+        &root,
+        options.requirements,
+        options.profiles,
+        options.services,
+    );
     results.retain(|item| {
         (options.only.is_empty()
             || options
@@ -358,6 +382,7 @@ fn group_into_steps(results: &[ResultItem]) -> Vec<DoctorStep> {
     let mut tools = Vec::new();
     let mut deps = Vec::new();
     let mut envs = Vec::new();
+    let mut services = Vec::new();
     for (index, item) in results.iter().enumerate() {
         if matches!(item.status, Status::Pass) {
             continue;
@@ -366,12 +391,14 @@ fn group_into_steps(results: &[ResultItem]) -> Vec<DoctorStep> {
             Kind::Command => tools.push(index),
             Kind::DependencyState => deps.push(index),
             Kind::Environment => envs.push(index),
+            Kind::Connectivity => services.push(index),
         }
     }
     [
         ("Install missing tools and fix version mismatches", tools),
         ("Install project dependencies", deps),
         ("Configure environment variables", envs),
+        ("Check service connectivity", services),
     ]
     .into_iter()
     .filter(|(_, items)| !items.is_empty())
@@ -441,7 +468,12 @@ struct DoctorItemReport {
 }
 
 fn run_doctor(root: PathBuf, options: DoctorOptions) {
-    let mut results = gather_results(&root, options.requirements, options.profiles);
+    let mut results = gather_results(
+        &root,
+        options.requirements,
+        options.profiles,
+        options.services,
+    );
     results.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
     let passed = results
         .iter()
@@ -574,6 +606,7 @@ fn kind_name(kind: &Kind) -> &str {
         Kind::Command => "command",
         Kind::Environment => "environment",
         Kind::DependencyState => "dependency_state",
+        Kind::Connectivity => "connectivity",
     }
 }
 
@@ -620,7 +653,7 @@ fn advisory_item(requirement: &Requirement) -> Option<AdvisoryItem> {
             None => format!("cmd:{}", requirement.name),
         },
         Kind::Environment => format!("env:{}", requirement.name),
-        Kind::DependencyState => return None,
+        Kind::DependencyState | Kind::Connectivity => return None,
     };
     Some(AdvisoryItem {
         requirement: rendered,
@@ -1093,6 +1126,123 @@ fn read_local_env(root: &Path) -> HashMap<String, String> {
     values
 }
 
+/// Builds opt-in connectivity checks from already-discovered requirements and
+/// the resolved environment: reachable database/cache URLs, a running Docker
+/// daemon (if Docker is used by the repository), and AWS identity (if the
+/// AWS CLI is configured). Only invoked when the caller explicitly asks for
+/// network connectivity checks.
+fn connectivity_requirements(
+    discovered: &[Requirement],
+    env_values: &HashMap<String, String>,
+) -> Vec<Requirement> {
+    let mut found = Vec::new();
+    let mut combined = env_values.clone();
+    for (key, value) in env::vars() {
+        combined.insert(key, value);
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut names: Vec<_> = combined.keys().cloned().collect();
+    names.sort();
+    for name in names {
+        let value = &combined[&name];
+        let Some((service, host, port)) = parse_service_url(value) else {
+            continue;
+        };
+        let target = format!("{service}:{host}:{port}");
+        if !seen.insert(target) {
+            continue;
+        }
+        found.push(Requirement {
+            kind: Kind::Connectivity,
+            name: service.into(),
+            constraint: Some(format!("{host}:{port}")),
+            source: format!("env:{name}"),
+            required: false,
+            message: None,
+        });
+    }
+    if discovered
+        .iter()
+        .any(|r| r.kind == Kind::Command && r.name == "docker")
+    {
+        found.push(Requirement {
+            kind: Kind::Connectivity,
+            name: "docker".into(),
+            constraint: None,
+            source: "docker".into(),
+            required: false,
+            message: None,
+        });
+    }
+    if aws_configured() {
+        found.push(Requirement {
+            kind: Kind::Connectivity,
+            name: "aws".into(),
+            constraint: None,
+            source: "aws".into(),
+            required: false,
+            message: None,
+        });
+    }
+    found
+}
+
+/// Recognizes common database/cache/queue connection strings and extracts
+/// only the host and port—credentials and paths are discarded immediately.
+fn parse_service_url(value: &str) -> Option<(&'static str, String, u16)> {
+    const SCHEMES: &[(&str, &str, u16)] = &[
+        ("postgres://", "postgres", 5432),
+        ("postgresql://", "postgres", 5432),
+        ("mysql://", "mysql", 3306),
+        ("rediss://", "redis", 6380),
+        ("redis://", "redis", 6379),
+        ("mongodb://", "mongodb", 27017),
+        ("amqp://", "rabbitmq", 5672),
+    ];
+    let (service, default_port, rest) = SCHEMES.iter().find_map(|(prefix, service, port)| {
+        value
+            .strip_prefix(prefix)
+            .map(|rest| (*service, *port, rest))
+    })?;
+    let after_at = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
+    let host_port = after_at
+        .split(['/', '?'])
+        .next()
+        .unwrap_or(after_at)
+        .split(',')
+        .next()
+        .unwrap_or(after_at);
+    if host_port.is_empty() {
+        return None;
+    }
+    let (host, port) = host_port
+        .rsplit_once(':')
+        .and_then(|(host, port)| port.parse::<u16>().ok().map(|port| (host.to_owned(), port)))
+        .unwrap_or((host_port.to_owned(), default_port));
+    (!host.is_empty()).then_some((service, host, port))
+}
+
+fn aws_configured() -> bool {
+    let cli_available = Command::new("aws")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !cli_available {
+        return false;
+    }
+    env::var("AWS_PROFILE").is_ok()
+        || env::var("AWS_ACCESS_KEY_ID").is_ok()
+        || home_dir().is_some_and(|home| {
+            home.join(".aws/credentials").exists() || home.join(".aws/config").exists()
+        })
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
 fn parse_custom_requirement(input: &str) -> Result<Requirement, String> {
     if let Some(name) = input.strip_prefix("env:")
         && !name.is_empty()
@@ -1155,6 +1305,92 @@ fn evaluate(
             }
         }
         Kind::Command => evaluate_command(requirement),
+        Kind::Connectivity => evaluate_connectivity(requirement),
+    }
+}
+
+/// Verifies a configured service is reachable. Only ever reports pass/warn
+/// status and, for network targets, the host:port that was dialed—never a
+/// credential, connection string, or command output.
+fn evaluate_connectivity(requirement: &Requirement) -> ResultItem {
+    match requirement.name.as_str() {
+        "docker" => evaluate_docker_daemon(requirement),
+        "aws" => evaluate_aws_identity(requirement),
+        service => evaluate_tcp_reachable(service, requirement),
+    }
+}
+
+fn evaluate_tcp_reachable(service: &str, requirement: &Requirement) -> ResultItem {
+    let target = requirement.constraint.clone().unwrap_or_default();
+    let reachable = target
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+        .is_some_and(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok());
+    ResultItem {
+        status: if reachable {
+            Status::Pass
+        } else {
+            Status::Warn
+        },
+        kind: Kind::Connectivity,
+        name: service.into(),
+        constraint: requirement.constraint.clone(),
+        source: requirement.source.clone(),
+        found: reachable.then(|| "reachable".into()),
+        message: if reachable {
+            format!("{service} is reachable")
+        } else {
+            format!("Could not reach {service} at the configured host and port")
+        },
+    }
+}
+
+fn evaluate_docker_daemon(requirement: &Requirement) -> ResultItem {
+    let reachable = Command::new("docker")
+        .arg("info")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    ResultItem {
+        status: if reachable {
+            Status::Pass
+        } else {
+            Status::Warn
+        },
+        kind: Kind::Connectivity,
+        name: "docker".into(),
+        constraint: None,
+        source: requirement.source.clone(),
+        found: reachable.then(|| "reachable".into()),
+        message: if reachable {
+            "Docker daemon is reachable".into()
+        } else {
+            "Docker daemon is not reachable; is Docker running?".into()
+        },
+    }
+}
+
+fn evaluate_aws_identity(requirement: &Requirement) -> ResultItem {
+    let reachable = Command::new("aws")
+        .args(["sts", "get-caller-identity", "--output", "text"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    ResultItem {
+        status: if reachable {
+            Status::Pass
+        } else {
+            Status::Warn
+        },
+        kind: Kind::Connectivity,
+        name: "aws".into(),
+        constraint: None,
+        source: requirement.source.clone(),
+        found: reachable.then(|| "reachable".into()),
+        message: if reachable {
+            "AWS credentials are valid and the identity endpoint is reachable".into()
+        } else {
+            "Could not verify AWS identity; check credentials and network access".into()
+        },
     }
 }
 
@@ -1630,5 +1866,52 @@ mod tests {
             Some("https://www.rust-lang.org/tools/install")
         );
         assert_eq!(doc_url_for("not-a-real-tool"), None);
+    }
+    #[test]
+    fn service_urls_are_parsed_without_leaking_credentials() {
+        assert_eq!(
+            parse_service_url("postgres://user:hunter2@db.internal:5433/app"),
+            Some(("postgres", "db.internal".into(), 5433))
+        );
+        assert_eq!(
+            parse_service_url("postgresql://db.internal/app"),
+            Some(("postgres", "db.internal".into(), 5432))
+        );
+        assert_eq!(
+            parse_service_url("redis://:pw@cache.internal/0"),
+            Some(("redis", "cache.internal".into(), 6379))
+        );
+        assert_eq!(
+            parse_service_url("mongodb://a.example.com,b.example.com/db"),
+            Some(("mongodb", "a.example.com".into(), 27017))
+        );
+        assert_eq!(parse_service_url("not-a-url"), None);
+        assert_eq!(parse_service_url("https://example.com"), None);
+    }
+    #[test]
+    fn service_url_parsing_never_returns_the_credential() {
+        let (_, host, _) =
+            parse_service_url("postgres://admin:s3cr3t@db.internal:5432/app").expect("parses");
+        assert!(!host.contains("s3cr3t"));
+        assert!(!host.contains("admin"));
+    }
+    #[test]
+    fn connectivity_requirements_add_docker_only_when_discovered() {
+        let mut env_values = HashMap::new();
+        env_values.insert(
+            "DATABASE_URL".into(),
+            "postgres://db.internal:5432/app".into(),
+        );
+        let discovered = vec![command("docker", None, "Dockerfile".into(), true)];
+        let found = connectivity_requirements(&discovered, &env_values);
+        assert!(found.iter().any(|r| r.name == "docker"));
+        assert!(
+            found.iter().any(
+                |r| r.name == "postgres" && r.constraint.as_deref() == Some("db.internal:5432")
+            )
+        );
+
+        let without_docker = connectivity_requirements(&[], &env_values);
+        assert!(!without_docker.iter().any(|r| r.name == "docker"));
     }
 }
