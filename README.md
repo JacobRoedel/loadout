@@ -183,6 +183,23 @@ Use the reusable composite action to run Loadout in any workflow without install
 
 Inputs: `path` (default `.`), `profile`, `strict`, `services`, `changed`, and `version` (the Loadout git ref to build; defaults to `main`). The action builds Loadout from source and runs `check --annotate`, so the step fails naturally when a required check fails and annotations appear inline on the pull request.
 
+## Ignoring intentional exceptions
+
+Add a `.loadoutignore` file at the repository root to permanently skip specific checks—one pattern per line, blank lines and `#` comments ignored:
+
+```
+# We don't run Postgres locally; CI provisions it separately
+DATABASE_URL
+
+# Skip all connectivity checks on this machine
+connectivity
+
+# Ignore a check only for one workspace member (name@source substring match)
+node_modules@packages/legacy-app
+```
+
+Each line matches the same way `--only`/`--skip` do: a check `kind` (`command`, `environment`, `dependency_state`, `connectivity`), an exact check name, or `name@source` to scope the exception to sources containing that substring. `.loadoutignore` is read by both `check` and `doctor`; pass `--no-ignore-file` to bypass it for one invocation (useful in CI when you want the unfiltered picture). Skipped checks are counted and reported, never silently dropped. This is intentionally a short exception list, not a place to reconfigure how Loadout behaves.
+
 ## Advisory mode
 
 `loadout init` explains which requirements the current repository already exposes. It is a discovery aid, not a setup command:
