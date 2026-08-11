@@ -62,6 +62,26 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Guided view that groups blockers into ordered next steps
+    Doctor {
+        /// Repository directory (defaults to the current directory)
+        path: Option<PathBuf>,
+        /// Add a one-off requirement: cmd:NAME, cmd:NAME@VERSION, or env:NAME
+        #[arg(long = "require", value_name = "REQUIREMENT")]
+        requirements: Vec<String>,
+        /// Add a reusable built-in requirement profile (also reads LOADOUT_PROFILE)
+        #[arg(long, value_enum, value_delimiter = ',', env = "LOADOUT_PROFILE")]
+        profile: Vec<Profile>,
+        /// Emit a machine-readable report
+        #[arg(long)]
+        json: bool,
+        /// Disable ANSI colors in human output
+        #[arg(long)]
+        no_color: bool,
+        /// Open each missing tool's install docs in your browser
+        #[arg(long)]
+        open_docs: bool,
+    },
     /// Generate shell completion scripts to stdout
     Completions {
         #[arg(value_enum)]
@@ -147,6 +167,14 @@ struct CheckOptions {
     quiet: bool,
 }
 
+struct DoctorOptions {
+    requirements: Vec<String>,
+    profiles: Vec<Profile>,
+    json: bool,
+    no_color: bool,
+    open_docs: bool,
+}
+
 #[derive(Serialize)]
 struct Advisory {
     path: String,
@@ -187,6 +215,23 @@ fn main() {
             },
         ),
         Some(Commands::Init { path, json }) => run_init(resolve_root(path), json),
+        Some(Commands::Doctor {
+            path,
+            requirements,
+            profile,
+            json,
+            no_color,
+            open_docs,
+        }) => run_doctor(
+            resolve_root(path),
+            DoctorOptions {
+                requirements,
+                profiles: profile,
+                json,
+                no_color,
+                open_docs,
+            },
+        ),
         Some(Commands::Completions { shell }) => run_completions(shell),
         Some(Commands::Man) => run_man(),
         None => {
@@ -227,13 +272,20 @@ fn resolve_root(path: Option<PathBuf>) -> PathBuf {
     }
 }
 
-fn run_check(root: PathBuf, options: CheckOptions) {
+/// Discovers requirements, expands profiles and one-off `--require` flags, and
+/// evaluates every requirement against the local machine. Shared by `check`
+/// and `doctor` so both commands see identical results.
+fn gather_results(
+    root: &Path,
+    requirements: Vec<String>,
+    profiles: Vec<Profile>,
+) -> Vec<ResultItem> {
     let mut diagnostics = Vec::new();
-    let mut requirements_found = discover(&root, &mut diagnostics);
-    for profile in options.profiles {
+    let mut requirements_found = discover(root, &mut diagnostics);
+    for profile in profiles {
         requirements_found.extend(profile_requirements(profile));
     }
-    for input in options.requirements {
+    for input in requirements {
         match parse_custom_requirement(&input) {
             Ok(requirement) => requirements_found.push(requirement),
             Err(message) => {
@@ -242,12 +294,17 @@ fn run_check(root: PathBuf, options: CheckOptions) {
             }
         }
     }
-    let env_values = read_local_env(&root);
+    let env_values = read_local_env(root);
     let mut results: Vec<_> = requirements_found
         .iter()
-        .map(|r| evaluate(r, &root, &env_values))
+        .map(|r| evaluate(r, root, &env_values))
         .collect();
     results.append(&mut diagnostics);
+    results
+}
+
+fn run_check(root: PathBuf, options: CheckOptions) {
+    let mut results = gather_results(&root, options.requirements, options.profiles);
     results.retain(|item| {
         (options.only.is_empty()
             || options
@@ -285,6 +342,205 @@ fn run_check(root: PathBuf, options: CheckOptions) {
         print_human(&report, !options.no_color, options.quiet);
     }
     if report.failed > 0 || (options.strict && report.warnings > 0) {
+        std::process::exit(1);
+    }
+}
+
+struct DoctorStep {
+    title: &'static str,
+    items: Vec<usize>,
+}
+
+/// Orders blockers into the sequence a developer should actually work
+/// through: tools must exist before dependency installs can succeed, and
+/// environment variables are typically the last thing configured.
+fn group_into_steps(results: &[ResultItem]) -> Vec<DoctorStep> {
+    let mut tools = Vec::new();
+    let mut deps = Vec::new();
+    let mut envs = Vec::new();
+    for (index, item) in results.iter().enumerate() {
+        if matches!(item.status, Status::Pass) {
+            continue;
+        }
+        match item.kind {
+            Kind::Command => tools.push(index),
+            Kind::DependencyState => deps.push(index),
+            Kind::Environment => envs.push(index),
+        }
+    }
+    [
+        ("Install missing tools and fix version mismatches", tools),
+        ("Install project dependencies", deps),
+        ("Configure environment variables", envs),
+    ]
+    .into_iter()
+    .filter(|(_, items)| !items.is_empty())
+    .map(|(title, items)| DoctorStep { title, items })
+    .collect()
+}
+
+fn doc_url_for(name: &str) -> Option<&'static str> {
+    match name {
+        "node" | "npm" => Some("https://nodejs.org/en/download"),
+        "pnpm" => Some("https://pnpm.io/installation"),
+        "yarn" => Some("https://yarnpkg.com/getting-started/install"),
+        "bun" => Some("https://bun.sh/docs/installation"),
+        "rustc" | "cargo" => Some("https://www.rust-lang.org/tools/install"),
+        "python" | "python3" => Some("https://www.python.org/downloads/"),
+        "uv" => Some("https://docs.astral.sh/uv/getting-started/installation/"),
+        "poetry" => Some("https://python-poetry.org/docs/#installation"),
+        "pipenv" => Some("https://pipenv.pypa.io/en/latest/installation.html"),
+        "go" => Some("https://go.dev/doc/install"),
+        "java" => Some("https://adoptium.net/installation/"),
+        "ruby" => Some("https://www.ruby-lang.org/en/documentation/installation/"),
+        "bundle" => Some("https://bundler.io/#getting-started"),
+        "docker" => Some("https://docs.docker.com/get-docker/"),
+        "terraform" => Some("https://developer.hashicorp.com/terraform/install"),
+        "psql" => Some("https://www.postgresql.org/download/"),
+        "redis-cli" => Some("https://redis.io/docs/getting-started/installation/"),
+        _ => None,
+    }
+}
+
+/// Opens `url` with the OS's default handler. Never modifies the machine; a
+/// failure to launch a browser is reported but not fatal.
+fn open_url(url: &str) {
+    let result = match env::consts::OS {
+        "macos" => Command::new("open").arg(url).status(),
+        "windows" => Command::new("cmd").args(["/C", "start", "", url]).status(),
+        _ => Command::new("xdg-open").arg(url).status(),
+    };
+    if !result.is_ok_and(|status| status.success()) {
+        eprintln!("loadout: could not open {url} automatically; open it manually");
+    }
+}
+
+#[derive(Serialize)]
+struct DoctorReport {
+    path: String,
+    passed: usize,
+    steps: Vec<DoctorStepReport>,
+}
+
+#[derive(Serialize)]
+struct DoctorStepReport {
+    title: String,
+    items: Vec<DoctorItemReport>,
+}
+
+#[derive(Serialize)]
+struct DoctorItemReport {
+    status: Status,
+    kind: Kind,
+    name: String,
+    constraint: Option<String>,
+    source: String,
+    found: Option<String>,
+    message: String,
+    docs: Option<String>,
+}
+
+fn run_doctor(root: PathBuf, options: DoctorOptions) {
+    let mut results = gather_results(&root, options.requirements, options.profiles);
+    results.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
+    let passed = results
+        .iter()
+        .filter(|r| matches!(r.status, Status::Pass))
+        .count();
+    let failed = results
+        .iter()
+        .filter(|r| matches!(r.status, Status::Fail))
+        .count();
+    let steps = group_into_steps(&results);
+
+    if options.json {
+        let report = DoctorReport {
+            path: root.display().to_string(),
+            passed,
+            steps: steps
+                .iter()
+                .map(|step| DoctorStepReport {
+                    title: step.title.into(),
+                    items: step
+                        .items
+                        .iter()
+                        .map(|&index| {
+                            let item = &results[index];
+                            DoctorItemReport {
+                                status: item.status,
+                                kind: item.kind.clone(),
+                                name: item.name.clone(),
+                                constraint: item.constraint.clone(),
+                                source: item.source.clone(),
+                                found: item.found.clone(),
+                                message: item.message.clone(),
+                                docs: doc_url_for(&item.name).map(str::to_owned),
+                            }
+                        })
+                        .collect(),
+                })
+                .collect(),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).expect("report serializes")
+        );
+        if failed > 0 {
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    println!("Loadout doctor: {}", display(&root));
+    if steps.is_empty() {
+        println!(
+            "\nNo blockers found. All {passed} checks passed — this repository looks ready for local development."
+        );
+        return;
+    }
+    let mut opened = std::collections::HashSet::new();
+    for (step_number, step) in steps.iter().enumerate() {
+        println!("\nStep {} — {}", step_number + 1, step.title);
+        for (item_number, &index) in step.items.iter().enumerate() {
+            let item = &results[index];
+            let label = match item.status {
+                Status::Fail => "FAIL",
+                Status::Warn => "WARN",
+                Status::Pass => unreachable!("passing checks are excluded from steps"),
+            };
+            let label = if options.no_color {
+                label.to_owned()
+            } else {
+                let code = if matches!(item.status, Status::Fail) {
+                    "31"
+                } else {
+                    "33"
+                };
+                format!("\x1b[{code}m{label}\x1b[0m")
+            };
+            println!(
+                "  {}. [{label}] {} — {}",
+                item_number + 1,
+                item.name,
+                item.message
+            );
+            println!("     Source: {}", item.source);
+            if let Some(url) = doc_url_for(&item.name) {
+                if options.open_docs {
+                    if opened.insert(item.name.clone()) {
+                        println!("     Opening docs: {url}");
+                        open_url(url);
+                    }
+                } else {
+                    println!("     Docs: {url}");
+                }
+            }
+        }
+    }
+    println!(
+        "\n{passed} checks already pass. Loadout only reports findings; apply the steps above yourself."
+    );
+    if failed > 0 {
         std::process::exit(1);
     }
 }
@@ -1313,5 +1569,66 @@ mod tests {
         assert!(message.contains("pnpm install"));
         assert!(message.contains("Turborepo workspace root"));
         fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn doctor_groups_blockers_in_remediation_order() {
+        let results = vec![
+            ResultItem {
+                status: Status::Fail,
+                kind: Kind::Environment,
+                name: "DATABASE_URL".into(),
+                constraint: None,
+                source: "src".into(),
+                found: None,
+                message: "missing".into(),
+            },
+            ResultItem {
+                status: Status::Pass,
+                kind: Kind::Command,
+                name: "cargo".into(),
+                constraint: None,
+                source: "src".into(),
+                found: Some("1.0.0".into()),
+                message: "ok".into(),
+            },
+            ResultItem {
+                status: Status::Fail,
+                kind: Kind::Command,
+                name: "node".into(),
+                constraint: None,
+                source: "src".into(),
+                found: None,
+                message: "missing".into(),
+            },
+            ResultItem {
+                status: Status::Warn,
+                kind: Kind::DependencyState,
+                name: "node_modules".into(),
+                constraint: None,
+                source: "src".into(),
+                found: None,
+                message: "run npm install".into(),
+            },
+        ];
+        let steps = group_into_steps(&results);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(
+            steps[0].title,
+            "Install missing tools and fix version mismatches"
+        );
+        assert_eq!(steps[0].items, vec![2]);
+        assert_eq!(steps[1].title, "Install project dependencies");
+        assert_eq!(steps[1].items, vec![3]);
+        assert_eq!(steps[2].title, "Configure environment variables");
+        assert_eq!(steps[2].items, vec![0]);
+    }
+    #[test]
+    fn doctor_docs_are_known_for_common_tools() {
+        assert_eq!(doc_url_for("node"), Some("https://nodejs.org/en/download"));
+        assert_eq!(
+            doc_url_for("rustc"),
+            Some("https://www.rust-lang.org/tools/install")
+        );
+        assert_eq!(doc_url_for("not-a-real-tool"), None);
     }
 }
