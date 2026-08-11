@@ -49,6 +49,7 @@ Failures mean a required command, version, or environment variable is missing. W
 | Go | `go.mod` | Go and its declared minimum version |
 | Java | Maven `pom.xml`, Gradle files/wrapper | Java |
 | Ruby | `.ruby-version`, `Gemfile`, `Gemfile.lock` | Ruby, Bundler, and a `bundle install` warning when `.bundle/config` declares a local vendor path that's missing |
+| Universal version managers | asdf `.tool-versions`, mise `mise.toml`/`.mise.toml` | Version constraints for whichever pinned tools Loadout recognizes (Node, Python, Ruby, Go, Rust, Java, Terraform, Yarn, pnpm, Bun) |
 | Infrastructure | `Dockerfile`, Compose files, Terraform `.tf` files | Docker, Terraform |
 | Data tooling | `postgresql.conf`, `.psqlrc`, `redis.conf`, `.rediscli_history` | `psql`, `redis-cli` |
 | Environment | Root `.env*.example`, `.env*.sample`, `.env*.template` | Non-empty environment variables, required unless marked optional |
@@ -71,6 +72,10 @@ API_KEY=your-key-here # optional
 ### Workspaces and monorepos
 
 Loadout recognizes npm/Yarn/Bun workspaces (`package.json` `workspaces`), pnpm workspaces (`pnpm-workspace.yaml`), Cargo workspaces (`Cargo.toml` `[workspace]`), uv workspaces (`pyproject.toml` `[tool.uv.workspace]`), and Turborepo (`turbo.json`). When a workspace root is detected, the dependency-install and build-artifact checks run once at the true root instead of once per member package, and the recommended install command reflects the workspace's package manager (for example `pnpm install --frozen-lockfile` run from the workspace root).
+
+### Universal version managers (asdf, mise)
+
+If a repository uses asdf (`.tool-versions`) or mise (`mise.toml`/`.mise.toml`) instead of per-language version files, Loadout reads the pinned versions for the plugins it recognizes and checks them the same way as `.nvmrc`/`.python-version`/etc. A `rust`/`rustc` entry checks both `rustc` and `cargo`. Entries pinned to `system` or `latest` are skipped—there's no specific version to check against. Plugins Loadout doesn't recognize are silently ignored rather than guessed at.
 
 ### Service connectivity checks
 
