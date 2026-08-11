@@ -8,7 +8,13 @@ It discovers requirements from metadata your repository already has. Loadout doe
 
 ## Install and run
 
-Install from a local checkout:
+Install a prebuilt binary (Linux and macOS; downloads from [GitHub Releases](https://github.com/JacobRoedel/loadout/releases)):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JacobRoedel/loadout/main/install.sh | sh
+```
+
+This installs to `~/.local/bin` by default. Override with `LOADOUT_VERSION=v0.2.0` or `LOADOUT_INSTALL_DIR=$HOME/bin` environment variables. On Windows, or to build from source, install with Cargo instead:
 
 ```sh
 cargo install --path .
@@ -200,7 +206,9 @@ Use the reusable composite action to run Loadout in any workflow without install
     changed: origin/${{ github.base_ref }}
 ```
 
-Inputs: `path` (default `.`), `profile`, `strict`, `services`, `changed`, and `version` (the Loadout git ref to build; defaults to `main`). The action builds Loadout from source and runs `check --annotate`, so the step fails naturally when a required check fails and annotations appear inline on the pull request.
+Inputs: `path` (default `.`), `profile`, `strict`, `services`, `changed`, and `version` (defaults to `main`). The action runs `check --annotate`, so the step fails naturally when a required check fails and annotations appear inline on the pull request.
+
+Pin `version` to a release tag (e.g. `version: v0.2.0`) to skip the from-source build entirely — on Linux and macOS runners, the action downloads the matching prebuilt binary instead, the same one `install.sh` uses. Windows runners, and any `version` that isn't a release tag (a branch, a commit, `main`), always build from source.
 
 ## Ignoring intentional exceptions
 
@@ -279,3 +287,9 @@ cargo build --release --locked
 ```
 
 See [AGENTS.md](AGENTS.md) for the branch and pull-request workflow used for feature and bug-fix changes.
+
+### Releasing
+
+Pushing a `v*` tag (e.g. `v0.2.0`) triggers `.github/workflows/release.yml`, which builds `loadout` for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64), then publishes a GitHub Release with each archive and a `checksums.txt`. `install.sh` and `action.yml` both consume these release assets. `workflow_dispatch` can be used to test the build matrix without publishing (only tag pushes publish a release).
+
+These predictable, checksummed archives are also what a future Homebrew formula or winget manifest would point at, though publishing to those package managers requires a separate submission and isn't part of this repository.
