@@ -58,6 +58,12 @@ enum Commands {
         /// Also verify configured services are reachable (makes network connections; opt-in)
         #[arg(long)]
         services: bool,
+        /// Only check requirements whose source file changed relative to this git ref (e.g. origin/main)
+        #[arg(long, value_name = "BASE_REF")]
+        changed: Option<String>,
+        /// Emit GitHub Actions ::error/::warning annotations for failing and warning checks
+        #[arg(long)]
+        annotate: bool,
     },
     /// Print an advisory summary of detected requirements without creating files
     Init {
@@ -175,6 +181,8 @@ struct CheckOptions {
     strict: bool,
     quiet: bool,
     services: bool,
+    changed: Option<String>,
+    annotate: bool,
 }
 
 struct DoctorOptions {
@@ -227,6 +235,8 @@ fn main() {
             strict,
             quiet,
             services,
+            changed,
+            annotate,
         }) => run_check(
             resolve_root(path),
             CheckOptions {
@@ -239,6 +249,8 @@ fn main() {
                 strict,
                 quiet,
                 services,
+                changed,
+                annotate,
             },
         ),
         Some(Commands::Init { path, json }) => run_init(resolve_root(path), json),
@@ -354,6 +366,15 @@ fn run_check(root: PathBuf, options: CheckOptions) {
                 .iter()
                 .any(|filter| matches_filter(item, filter))
     });
+    if let Some(base) = &options.changed {
+        match changed_files(&root, base) {
+            Ok(changed) => results.retain(|item| is_affected_by_change(&item.source, &changed)),
+            Err(message) => {
+                eprintln!("loadout: {message}");
+                std::process::exit(2);
+            }
+        }
+    }
     results.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
     let report = Report {
         path: root.display().to_string(),
@@ -379,9 +400,80 @@ fn run_check(root: PathBuf, options: CheckOptions) {
     } else {
         print_human(&report, !options.no_color, options.quiet);
     }
+    if options.annotate {
+        print_annotations(&report, &root);
+    }
     if report.failed > 0 || (options.strict && report.warnings > 0) {
         std::process::exit(1);
     }
+}
+
+/// Runs `git diff --name-only base...HEAD` and resolves each changed path to
+/// an absolute path so it can be matched against requirement sources.
+fn changed_files(root: &Path, base: &str) -> Result<std::collections::HashSet<PathBuf>, String> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", &format!("{base}...HEAD")])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git diff against '{base}' failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| root.join(line))
+        .collect())
+}
+
+/// A requirement is affected by a set of changed files when its source is
+/// one of those files, or (for directory-scoped sources like dependency
+/// state) contains one of them. Sources that are not real paths on disk
+/// (profiles, `--require`, `docker`, `aws`) can never be attributed to a
+/// file change, so they are always kept.
+fn is_affected_by_change(source: &str, changed: &std::collections::HashSet<PathBuf>) -> bool {
+    let path = PathBuf::from(source);
+    if !path.exists() {
+        return true;
+    }
+    if changed.contains(&path) {
+        return true;
+    }
+    path.is_dir() && changed.iter().any(|file| file.starts_with(&path))
+}
+
+/// Emits GitHub Actions workflow-command annotations (`::error`/`::warning`)
+/// for every failing or warning result, so CI surfaces them inline on the
+/// exact file that declared the requirement.
+fn print_annotations(report: &Report, root: &Path) {
+    for item in &report.results {
+        let level = match item.status {
+            Status::Fail => "error",
+            Status::Warn => "warning",
+            Status::Pass => continue,
+        };
+        let source_path = Path::new(&item.source);
+        let file = source_path
+            .strip_prefix(root)
+            .map(|relative| relative.display().to_string())
+            .unwrap_or_else(|_| item.source.clone());
+        let file_attr = if source_path.is_file() {
+            format!("file={},", annotation_escape(&file))
+        } else {
+            String::new()
+        };
+        let message = annotation_escape(&format!("{}: {}", item.name, item.message));
+        println!("::{level} {file_attr}title=loadout::{message}");
+    }
+}
+
+fn annotation_escape(value: &str) -> String {
+    value
+        .replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
 }
 
 struct DoctorStep {
@@ -2170,5 +2262,48 @@ mod tests {
         assert_eq!(groups[0].tool, "npm scripts");
         assert_eq!(groups[0].commands.len(), 2);
         fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn unattributable_sources_are_always_considered_changed() {
+        let changed = std::collections::HashSet::new();
+        assert!(is_affected_by_change("--require", &changed));
+        assert!(is_affected_by_change("profile:web", &changed));
+        assert!(is_affected_by_change("docker", &changed));
+    }
+    #[test]
+    fn file_sources_are_affected_only_when_changed() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-changed-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let touched = directory.join("package.json");
+        let untouched = directory.join("Cargo.toml");
+        fs::write(&touched, "{}").unwrap();
+        fs::write(&untouched, "").unwrap();
+        let mut changed = std::collections::HashSet::new();
+        changed.insert(touched.clone());
+        assert!(is_affected_by_change(touched.to_str().unwrap(), &changed));
+        assert!(!is_affected_by_change(
+            untouched.to_str().unwrap(),
+            &changed
+        ));
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn directory_sources_are_affected_when_they_contain_a_changed_file() {
+        let directory =
+            std::env::temp_dir().join(format!("loadout-changed-dir-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let changed_file = directory.join("src/lib.rs");
+        let mut changed = std::collections::HashSet::new();
+        changed.insert(changed_file);
+        assert!(is_affected_by_change(directory.to_str().unwrap(), &changed));
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn annotation_messages_escape_percent_and_newlines() {
+        assert_eq!(
+            annotation_escape("100% done\nnext line"),
+            "100%25 done%0Anext line"
+        );
     }
 }

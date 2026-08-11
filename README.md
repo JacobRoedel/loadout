@@ -146,6 +146,43 @@ Exit codes:
 | `1` | At least one required check failed, or a warning occurred under `--strict`. |
 | `2` | Invalid CLI input or an unreadable target path. |
 
+## CI integration
+
+### `--changed` for pull request checks
+
+Pass `--changed <BASE_REF>` to only evaluate requirements whose source file changed relative to a git ref (for example the PR's base branch). Requirements that cannot be attributed to a specific file—profiles, `--require` flags, Docker, AWS—are always included:
+
+```sh
+loadout check --changed origin/main
+```
+
+This requires enough git history to diff against `BASE_REF`; in GitHub Actions, use `actions/checkout` with `fetch-depth: 0` or a depth that includes the base branch.
+
+### `--annotate` for inline PR annotations
+
+Pass `--annotate` to additionally emit GitHub Actions workflow-command annotations (`::error`/`::warning`) for every failing or warning check, pointing at the exact source file:
+
+```sh
+loadout check --annotate
+```
+
+### GitHub Action
+
+Use the reusable composite action to run Loadout in any workflow without installing it yourself:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+- uses: JacobRoedel/loadout@main
+  with:
+    profile: web,containers
+    strict: 'true'
+    changed: origin/${{ github.base_ref }}
+```
+
+Inputs: `path` (default `.`), `profile`, `strict`, `services`, `changed`, and `version` (the Loadout git ref to build; defaults to `main`). The action builds Loadout from source and runs `check --annotate`, so the step fails naturally when a required check fails and annotations appear inline on the pull request.
+
 ## Advisory mode
 
 `loadout init` explains which requirements the current repository already exposes. It is a discovery aid, not a setup command:

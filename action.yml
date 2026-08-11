@@ -1,0 +1,68 @@
+name: 'Loadout check'
+description: 'Check a repository local development-environment readiness with Loadout and annotate PRs with any missing requirement.'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+inputs:
+  path:
+    description: 'Repository directory to check'
+    required: false
+    default: '.'
+  profile:
+    description: 'Comma-separated built-in requirement profiles to include (web, rust, python, containers, infra, data)'
+    required: false
+    default: ''
+  strict:
+    description: 'Treat warnings as failures'
+    required: false
+    default: 'false'
+  services:
+    description: 'Also verify configured services are reachable (database/cache URLs, Docker daemon, AWS identity)'
+    required: false
+    default: 'false'
+  changed:
+    description: 'Only check requirements whose source file changed relative to this git ref, e.g. origin/main. Requires the checkout step to fetch enough history to diff against it.'
+    required: false
+    default: ''
+  version:
+    description: 'Git ref of JacobRoedel/loadout to build and run'
+    required: false
+    default: 'main'
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout Loadout source
+      uses: actions/checkout@v4
+      with:
+        repository: JacobRoedel/loadout
+        ref: ${{ inputs.version }}
+        path: .loadout-action-src
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    - name: Build Loadout
+      shell: bash
+      run: cargo build --release --locked --manifest-path .loadout-action-src/Cargo.toml
+    - name: Run loadout check
+      shell: bash
+      env:
+        LOADOUT_PATH: ${{ inputs.path }}
+        LOADOUT_PROFILE_INPUT: ${{ inputs.profile }}
+        LOADOUT_STRICT: ${{ inputs.strict }}
+        LOADOUT_SERVICES: ${{ inputs.services }}
+        LOADOUT_CHANGED: ${{ inputs.changed }}
+      run: |
+        set -euo pipefail
+        args=(check "$LOADOUT_PATH" --annotate)
+        if [ -n "$LOADOUT_PROFILE_INPUT" ]; then
+          args+=(--profile "$LOADOUT_PROFILE_INPUT")
+        fi
+        if [ "$LOADOUT_STRICT" = "true" ]; then
+          args+=(--strict)
+        fi
+        if [ "$LOADOUT_SERVICES" = "true" ]; then
+          args+=(--services)
+        fi
+        if [ -n "$LOADOUT_CHANGED" ]; then
+          args+=(--changed "$LOADOUT_CHANGED")
+        fi
+        .loadout-action-src/target/release/loadout "${args[@]}"
