@@ -675,3 +675,55 @@ fn discovery_reads_devcontainer_nix_brewfile_and_actions_versions() {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn discovery_supports_requested_ecosystems_and_jvm_pins() {
+    let directory =
+        std::env::temp_dir().join(format!("loadout-ecosystems-test-{}", std::process::id()));
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("global.json"),
+        "{\"sdk\": {\"version\": \"8.0.100\"}}",
+    )
+    .unwrap();
+    fs::write(directory.join("composer.json"), "{}\n").unwrap();
+    fs::write(
+        directory.join("mix.exs"),
+        "defmodule App.MixProject do end\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("pubspec.yaml"),
+        "environment:\n  sdk: '>=3.2.0 <4.0.0'\nflutter:\n  uses-material-design: true\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("pom.xml"),
+        "<properties><java.version>21</java.version></properties>",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("build.gradle"),
+        "java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }",
+    )
+    .unwrap();
+    let mut diagnostics = Vec::new();
+    let found = discover(&directory, &mut diagnostics);
+    let names: Vec<_> = found
+        .iter()
+        .map(|requirement| requirement.name.as_str())
+        .collect();
+    for name in [
+        "dotnet", "php", "composer", "elixir", "mix", "dart", "flutter",
+    ] {
+        assert!(names.contains(&name), "missing {name} requirement");
+    }
+    let java_constraints: Vec<_> = found
+        .iter()
+        .filter(|requirement| requirement.name == "java")
+        .filter_map(|requirement| requirement.constraint.as_deref())
+        .collect();
+    assert!(java_constraints.contains(&">=21.0.0"));
+    assert!(java_constraints.contains(&">=17.0.0"));
+    fs::remove_dir_all(directory).unwrap();
+}

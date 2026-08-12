@@ -131,6 +131,23 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
             "go.mod" => {
                 found.push(command("go", go_mod_constraint(path), display(path), true));
             }
+            "global.json" => found.extend(dotnet_requirements(path, diagnostics)),
+            _ if name.ends_with(".sln")
+                || name.ends_with(".csproj")
+                || name.ends_with(".fsproj") =>
+            {
+                found.push(command("dotnet", None, display(path), true));
+            }
+            "composer.json" => {
+                found.push(command("php", None, display(path), true));
+                found.push(command("composer", None, display(path), true));
+            }
+            "composer.lock" => found.push(command("composer", None, display(path), true)),
+            "mix.exs" => {
+                found.push(command("elixir", None, display(path), true));
+                found.push(command("mix", None, display(path), true));
+            }
+            "pubspec.yaml" => found.extend(pubspec_requirements(path, diagnostics)),
             ".tool-versions" => {
                 found.extend(tool_versions_requirements(path));
             }
@@ -145,9 +162,21 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
             ".envrc" => {
                 found.push(command("direnv", None, display(path), true));
             }
-            "pom.xml" | "build.gradle" | "build.gradle.kts" | "gradlew" => {
-                found.push(command("java", None, display(path), true));
+            "pom.xml" => found.push(command(
+                "java",
+                jvm_constraint(path, "maven"),
+                display(path),
+                true,
+            )),
+            "build.gradle" | "build.gradle.kts" => {
+                found.push(command(
+                    "java",
+                    jvm_constraint(path, "gradle"),
+                    display(path),
+                    true,
+                ));
             }
+            "gradlew" => found.push(command("java", None, display(path), true)),
             ".ruby-version" => {
                 if let Ok(version) = fs::read_to_string(path) {
                     let version = version.trim();
@@ -243,6 +272,75 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
     }
     found.extend(env_requirements(root, diagnostics));
     found
+}
+
+fn dotnet_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> {
+    let version = match fs::read_to_string(path).and_then(|contents| {
+        serde_json::from_str::<Value>(&contents).map_err(std::io::Error::other)
+    }) {
+        Ok(value) => value
+            .pointer("/sdk/version")
+            .and_then(Value::as_str)
+            .map(normalize_exact),
+        Err(error) => {
+            diagnostics.push(parse_warning(path, "global.json", error));
+            None
+        }
+    };
+    vec![command("dotnet", version, display(path), true)]
+}
+
+fn pubspec_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> {
+    let value = match fs::read_to_string(path).and_then(|contents| {
+        serde_yaml::from_str::<serde_yaml::Value>(&contents).map_err(std::io::Error::other)
+    }) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.push(parse_warning(path, "pubspec.yaml", error));
+            return Vec::new();
+        }
+    };
+    let dart_constraint = value
+        .get("environment")
+        .and_then(|value| value.get("sdk"))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_owned);
+    let mut found = vec![command("dart", dart_constraint, display(path), true)];
+    if value.get("flutter").is_some() {
+        found.push(command("flutter", None, display(path), true));
+    }
+    found
+}
+
+fn jvm_constraint(path: &Path, build_tool: &str) -> Option<String> {
+    let contents = fs::read_to_string(path).ok()?;
+    let patterns: &[&str] = match build_tool {
+        "maven" => &[
+            "<maven.compiler.release>",
+            "<maven.compiler.source>",
+            "<java.version>",
+        ],
+        _ => &[
+            "JavaLanguageVersion.of(",
+            "jvmToolchain(",
+            "sourceCompatibility =",
+            "sourceCompatibility=",
+        ],
+    };
+    for pattern in patterns {
+        let Some(after) = contents.split(pattern).nth(1) else {
+            continue;
+        };
+        let version: String = after
+            .trim_start_matches(['\'', '\"', ' '])
+            .chars()
+            .take_while(|character| character.is_ascii_digit() || *character == '.')
+            .collect();
+        if !version.is_empty() {
+            return Some(format!(">={}", normalize_version(&version)));
+        }
+    }
+    None
 }
 
 fn devcontainer_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> {
