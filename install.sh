@@ -46,11 +46,13 @@ target() {
 
 main() {
   target_triple="$(target)"
+  asset="loadout-${target_triple}.tar.gz"
   if [ "$version" = "latest" ]; then
-    url="https://github.com/$repo/releases/latest/download/loadout-${target_triple}.tar.gz"
+    release_url="https://github.com/$repo/releases/latest/download"
   else
-    url="https://github.com/$repo/releases/download/${version}/loadout-${target_triple}.tar.gz"
+    release_url="https://github.com/$repo/releases/download/${version}"
   fi
+  url="$release_url/$asset"
 
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT INT TERM
@@ -59,6 +61,29 @@ main() {
   if ! curl -fsSL "$url" -o "$tmp_dir/loadout.tar.gz"; then
     echo "loadout: download failed; check that a release exists for '$version' and '$target_triple'" >&2
     echo "  https://github.com/$repo/releases" >&2
+    exit 1
+  fi
+
+  echo "loadout: verifying SHA-256 checksum"
+  if ! curl -fsSL "$release_url/checksums.txt" -o "$tmp_dir/checksums.txt"; then
+    echo "loadout: could not download release checksums; refusing unverified archive" >&2
+    exit 1
+  fi
+  expected="$(awk -v asset="$asset" '$2 == "./" asset || $2 == asset { print $1; exit }' "$tmp_dir/checksums.txt")"
+  if [ -z "$expected" ]; then
+    echo "loadout: release checksums do not contain '$asset'; refusing unverified archive" >&2
+    exit 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$tmp_dir/loadout.tar.gz" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$tmp_dir/loadout.tar.gz" | awk '{print $1}')"
+  else
+    echo "loadout: sha256sum or shasum is required to verify the download" >&2
+    exit 1
+  fi
+  if [ "$actual" != "$expected" ]; then
+    echo "loadout: checksum mismatch; refusing to install archive" >&2
     exit 1
   fi
 
