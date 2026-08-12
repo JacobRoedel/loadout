@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::check::gather_results;
 use crate::ignore_file::apply_ignore_file;
-use crate::model::{DoctorOptions, Kind, ResultItem, Status, display};
+use crate::model::{DoctorOptions, JSON_SCHEMA_VERSION, Kind, ResultItem, Status, display};
 
 pub(crate) struct DoctorStep {
     pub(crate) title: &'static str,
@@ -80,6 +80,7 @@ fn open_url(url: &str) {
 
 #[derive(Serialize)]
 struct DoctorReport {
+    schema_version: &'static str,
     path: String,
     passed: usize,
     ignored: usize,
@@ -125,6 +126,7 @@ pub(crate) fn run_doctor(root: PathBuf, options: DoctorOptions) {
 
     if options.json {
         let report = DoctorReport {
+            schema_version: JSON_SCHEMA_VERSION,
             path: root.display().to_string(),
             passed,
             ignored,

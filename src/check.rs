@@ -4,6 +4,7 @@ use std::{
 };
 
 use clap::ValueEnum;
+use serde_json::json;
 
 use crate::cli::Profile;
 use crate::connectivity::connectivity_requirements;
@@ -11,7 +12,9 @@ use crate::discover::discover;
 use crate::dotenv::read_local_env;
 use crate::evaluate::{evaluate, parse_custom_requirement};
 use crate::ignore_file::apply_ignore_file;
-use crate::model::{CheckOptions, Report, Requirement, ResultItem, Status, command, kind_name};
+use crate::model::{
+    CheckOptions, JSON_SCHEMA_VERSION, Report, Requirement, ResultItem, Status, command, kind_name,
+};
 
 /// Discovers requirements, expands profiles and one-off `--require` flags, and
 /// evaluates every requirement against the local machine. Shared by `check`
@@ -78,6 +81,7 @@ pub(crate) fn run_check(root: PathBuf, options: CheckOptions) {
     }
     results.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
     let report = Report {
+        schema_version: JSON_SCHEMA_VERSION,
         path: root.display().to_string(),
         passed: results
             .iter()
@@ -94,11 +98,17 @@ pub(crate) fn run_check(root: PathBuf, options: CheckOptions) {
         ignored,
         results,
     };
-    if options.json {
+    if options.sarif {
+        print_sarif(&report);
+    } else if options.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&report).expect("report serializes")
         );
+    } else if options.summary {
+        print_summary(&report);
+    } else if let Some(check) = &options.explain {
+        print_explain(&report, check);
     } else {
         print_human(&report, !options.no_color, options.quiet);
     }
@@ -108,6 +118,107 @@ pub(crate) fn run_check(root: PathBuf, options: CheckOptions) {
     if report.failed > 0 || (options.strict && report.warnings > 0) {
         std::process::exit(1);
     }
+}
+
+fn print_summary(report: &Report) {
+    println!(
+        "{} passed, {} failed, {} warnings{}",
+        report.passed,
+        report.failed,
+        report.warnings,
+        if report.ignored == 0 {
+            String::new()
+        } else {
+            format!(", {} ignored", report.ignored)
+        }
+    );
+}
+
+fn print_explain(report: &Report, check: &str) {
+    let matching: Vec<_> = report
+        .results
+        .iter()
+        .filter(|item| item.name == check)
+        .collect();
+    if matching.is_empty() {
+        eprintln!("loadout: no check named '{check}' was discovered");
+        std::process::exit(2);
+    }
+    for item in matching {
+        println!("{} ({})", item.name, kind_name(&item.kind));
+        println!("  source: {}", item.source);
+        println!(
+            "  declared constraint: {}",
+            item.constraint.as_deref().unwrap_or("none")
+        );
+        println!(
+            "  interpretation: {}",
+            explain_constraint(item.constraint.as_deref())
+        );
+        println!("  result: {:?} — {}", item.status, item.message);
+        if let Some(found) = &item.found {
+            println!("  detected: {found}");
+        }
+    }
+}
+
+fn explain_constraint(constraint: Option<&str>) -> String {
+    match constraint {
+        None => "the command or setting only needs to be available".into(),
+        Some(value) if value.starts_with('=') => {
+            format!("an exact normalized version match for {}", &value[1..])
+        }
+        Some(value) => format!("a semantic-version requirement: {value}"),
+    }
+}
+
+fn print_sarif(report: &Report) {
+    let results: Vec<_> = report
+        .results
+        .iter()
+        .filter(|item| !matches!(item.status, Status::Pass))
+        .map(|item| {
+            let level = if matches!(item.status, Status::Fail) {
+                "error"
+            } else {
+                "warning"
+            };
+            json!({
+                "ruleId": kind_name(&item.kind),
+                "level": level,
+                "message": { "text": format!("{}: {}", item.name, item.message) },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": item.source },
+                        "region": { "startLine": 1 }
+                    }
+                }],
+                "properties": {
+                    "name": item.name,
+                    "constraint": item.constraint,
+                    "found": item.found,
+                    "schema_version": JSON_SCHEMA_VERSION
+                }
+            })
+        })
+        .collect();
+    let report = json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": { "driver": {
+                "name": "loadout",
+                "version": env!("CARGO_PKG_VERSION"),
+                "informationUri": "https://github.com/JacobRoedel/loadout"
+            }},
+            "invocations": [{ "executionSuccessful": report.failed == 0 }],
+            "results": results
+        }]
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("SARIF serializes")
+    );
 }
 
 /// Runs `git diff --name-only base...HEAD` and resolves each changed path to
