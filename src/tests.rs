@@ -9,7 +9,7 @@ use crate::check::{
 };
 use crate::cli::Profile;
 use crate::connectivity::{connectivity_requirements, parse_service_url};
-use crate::discover::go_mod_constraint;
+use crate::discover::{discover, go_mod_constraint};
 use crate::discover::{
     is_cargo_workspace_root, is_node_workspace_root, is_uv_workspace_root, is_workspace_member,
     mise_requirements, node_dependency_warning, node_lockfile_health, pre_commit_requirements,
@@ -615,5 +615,34 @@ fn envrc_values_are_readable_alongside_env_files() {
         values.get("DATABASE_URL").map(String::as_str),
         Some("postgres://localhost/dev")
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn malformed_metadata_is_reported_with_its_source() {
+    let directory =
+        std::env::temp_dir().join(format!("loadout-parser-test-{}", std::process::id()));
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("package.json"), "{ invalid").unwrap();
+    fs::write(directory.join("Cargo.toml"), "[package\nname = ").unwrap();
+    fs::write(directory.join("compose.yaml"), "services: [").unwrap();
+    fs::write(directory.join(".env.example"), "DATABASE_URL\n").unwrap();
+    fs::write(directory.join(".nvmrc"), "latest\n").unwrap();
+
+    let mut diagnostics = Vec::new();
+    discover(&directory, &mut diagnostics);
+    assert!(diagnostics.len() >= 5, "every malformed file is surfaced");
+    for name in [
+        "package.json",
+        "Cargo.toml",
+        "compose.yaml",
+        ".env.example",
+        ".nvmrc",
+    ] {
+        assert!(
+            diagnostics.iter().any(|item| item.source.ends_with(name)),
+            "missing diagnostic for {name}"
+        );
+    }
     fs::remove_dir_all(directory).unwrap();
 }
