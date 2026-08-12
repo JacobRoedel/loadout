@@ -20,4 +20,8 @@ jobs:
           components: clippy, rustfmt
       - run: cargo fmt --check
       - run: cargo test --locked
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --locked -- -D warnings
+      - name: Audit Rust dependencies
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

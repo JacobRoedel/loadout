@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: write
+  attestations: write
+  id-token: write
 
 jobs:
   build:
@@ -82,9 +84,21 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/loadout.spdx.json
       - name: Generate checksums
         working-directory: dist
         run: sha256sum ./* > checksums.txt
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

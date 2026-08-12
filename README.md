@@ -302,6 +302,6 @@ See [AGENTS.md](AGENTS.md) for the branch and pull-request workflow used for fea
 
 ### Releasing
 
-Pushing a tag matching the package version (for example, `v0.2.0` for Cargo package version `0.2.0`) triggers `.github/workflows/release.yml`, which builds `loadout` for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64), then publishes a GitHub Release with each archive and a `checksums.txt`. `install.sh` and `action.yml` both consume these release assets. `workflow_dispatch` can be used to test the build matrix without publishing (only tag pushes publish a release).
+Pushing a tag matching the package version (for example, `v0.2.0` for Cargo package version `0.2.0`) triggers `.github/workflows/release.yml`, which builds `loadout` for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64), then publishes a GitHub Release with each archive, `checksums.txt`, an SPDX SBOM, and GitHub build provenance. `install.sh` and `action.yml` verify the archive SHA-256 against that release checksum before extracting it. `workflow_dispatch` can be used to test the build matrix without publishing (only tag pushes publish a release).
 
 These predictable, checksummed archives are also what a future Homebrew formula or winget manifest would point at, though publishing to those package managers requires a separate submission and isn't part of this repository.
