@@ -4,6 +4,8 @@ use serde::Serialize;
 
 use crate::cli::Profile;
 
+pub(crate) const JSON_SCHEMA_VERSION: &str = "loadout/v1";
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Kind {
@@ -44,6 +46,7 @@ pub(crate) struct ResultItem {
 
 #[derive(Serialize)]
 pub(crate) struct Report {
+    pub(crate) schema_version: &'static str,
     pub(crate) path: String,
     pub(crate) results: Vec<ResultItem>,
     pub(crate) passed: usize,
@@ -56,6 +59,9 @@ pub(crate) struct CheckOptions {
     pub(crate) requirements: Vec<String>,
     pub(crate) profiles: Vec<Profile>,
     pub(crate) json: bool,
+    pub(crate) sarif: bool,
+    pub(crate) summary: bool,
+    pub(crate) explain: Option<String>,
     pub(crate) no_color: bool,
     pub(crate) only: Vec<String>,
     pub(crate) skip: Vec<String>,

@@ -146,10 +146,13 @@ LOADOUT_PROFILE=web,containers loadout check --strict
 
 ## Reporting, filtering, and exit codes
 
-Human-readable output is the default. Use `--json` for automation; it includes the repository path, counts, and result objects with status, kind, source, constraint, detected version, and message.
+Human-readable output is the default. Use `--json` for automation; it includes a stable `schema_version` (`loadout/v1`), the repository path, counts, and result objects with status, kind, source, constraint, detected version, and message.
 
 ```sh
 loadout check --json
+loadout check --sarif > loadout.sarif
+loadout check --summary
+loadout check --explain node
 loadout check --only environment
 loadout check --only node
 loadout check --skip dependency_state
@@ -160,6 +163,8 @@ loadout check --strict
 - `--only <kind|name>` includes checks that match `command`, `environment`, `dependency_state`, `connectivity`, or an exact check name. Repeat it to include several filters.
 - `--skip <kind|name>` excludes matching checks. Repeat it as needed.
 - `--quiet` hides passing results in human output and prints nothing when every selected check passes.
+- `--summary` prints only final counts; `--explain <check>` shows the metadata source and interpreted version constraint for a named check.
+- `--sarif` emits a SARIF 2.1.0 report containing failures and warnings for CI/code-scanning systems.
 - `--no-color` disables ANSI color codes.
 - `--strict` treats warnings as failures for this invocation.
 

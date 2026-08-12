@@ -28,6 +28,15 @@ pub(crate) enum Commands {
         /// Emit a machine-readable report
         #[arg(long)]
         json: bool,
+        /// Emit a SARIF 2.1.0 report for code-scanning integrations
+        #[arg(long, conflicts_with_all = ["json", "summary", "explain"])]
+        sarif: bool,
+        /// Print only the final pass/fail/warning counts
+        #[arg(long, conflicts_with_all = ["json", "sarif", "quiet", "explain"])]
+        summary: bool,
+        /// Explain the source and interpreted constraint for a check name
+        #[arg(long, value_name = "CHECK", conflicts_with_all = ["json", "sarif", "summary"])]
+        explain: Option<String>,
         /// Disable ANSI colors in human output
         #[arg(long)]
         no_color: bool,
