@@ -1,4 +1,9 @@
-<title>loadout — reveal.js deck</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>loadout &mdash; reveal.js deck</title>
 <style>
 @font-face {
   font-family: 'Plex Mono';
@@ -531,14 +536,103 @@ body {
   margin-top: 1.6em;
 }
 
+/* paired terminal graphic: one source of truth, two useful views */
+.command-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.4em;
+  align-items: center;
+  margin-top: 1em;
+}
+.command-compare .term {
+  margin: 0;
+}
+.command-compare .term__body {
+  min-height: 13.8em;
+  font-size: 0.39em;
+  line-height: 1.68;
+}
+.command-label {
+  margin: 0 0 0.6em;
+  font-family: var(--mono);
+  font-size: 0.36em;
+  color: var(--ink-faint);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* JSON is shown as a contract, then each piece is introduced in sequence. */
+.json-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(12em, 0.82fr);
+  gap: 1.3em;
+  align-items: center;
+  margin-top: 0.8em;
+}
+.json-window .term__body {
+  font-size: 0.42em;
+  line-height: 1.64;
+  color: var(--ink-dim);
+}
+.json-key { color: var(--accent); }
+.json-string { color: var(--pass); }
+.json-number { color: var(--warn); }
+.json-window .fragment.visible.current-fragment {
+  color: var(--ink);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.agent-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7em;
+  font-size: 0.52em;
+}
+.agent-note {
+  border-left: 2px solid var(--line);
+  padding: 0.55em 0 0.55em 0.9em;
+  color: var(--ink-dim);
+}
+.agent-note strong { color: var(--accent); font-family: var(--mono); }
+
+/* architecture slide: the hand-off between each concern stays visible */
+.architecture-details {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.65em;
+  margin-top: 1em;
+}
+.architecture-details .card {
+  padding: 0.85em 0.9em;
+  border-radius: 8px;
+}
+.architecture-details .card h4 {
+  margin: 0 0 0.35em;
+  font-size: 0.55em;
+}
+.architecture-details .card p {
+  font-size: 0.4em;
+  line-height: 1.45;
+}
+.module-caption {
+  margin: 1em 0 0;
+  font-family: var(--mono);
+  font-size: 0.34em;
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 @media (max-width: 900px) {
   .grid--2,
-  .grid--3 {
+  .grid--3,
+  .architecture-details {
     grid-template-columns: 1fr;
   }
 }
 
 </style>
+</head>
+<body>
 <div class="reveal">
   <div class="slides">
 
@@ -546,7 +640,7 @@ body {
     <section class="title-slide">
       <div class="eyebrow">~/loadout $ ./run</div>
       <h1>loadout<span class="cursor"></span></h1>
-      <p class="lede">Know your dev environment is ready — before you start.</p>
+      <p class="lede">Know your dev environment is ready &mdash; before you start.</p>
       <div class="chips" style="margin-top:2em">
         <span class="chip chip--tag">local</span>
         <span class="chip chip--tag">read&#8209;only</span>
@@ -661,18 +755,88 @@ body {
       <h2>Ordered, not overwhelming</h2>
       <p class="lede" style="max-width:40ch">Blockers are grouped in the order a developer would actually clear them.</p>
       <div class="pipeline" style="margin-top:1.8em">
-        <span class="step">install tools</span>
-        <span class="arrow">&rarr;</span>
-        <span class="step">install dependencies</span>
-        <span class="arrow">&rarr;</span>
-        <span class="step">configure env vars</span>
-        <span class="arrow">&rarr;</span>
-        <span class="step">check services</span>
+        <span class="step fragment fade-up">install tools</span>
+        <span class="arrow fragment fade-up">&rarr;</span>
+        <span class="step fragment fade-up">install dependencies</span>
+        <span class="arrow fragment fade-up">&rarr;</span>
+        <span class="step fragment fade-up">configure env vars</span>
+        <span class="arrow fragment fade-up">&rarr;</span>
+        <span class="step fragment fade-up">check services</span>
       </div>
       <p class="lede" style="margin-top:1.8em;max-width:44ch"><code>--open-docs</code> opens each missing tool's install page. loadout only reports findings — the fix is always yours to run.</p>
     </section>
 
-    <!-- 8. CI -->
+    <!-- 8. check and doctor relationship -->
+    <section>
+      <div class="eyebrow">$ check / doctor</div>
+      <h2>Check tells you what. Doctor tells you what next.</h2>
+      <div class="command-compare">
+        <div>
+          <div class="command-label">factual report</div>
+          <div class="term">
+            <div class="term__bar">
+              <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
+              <span class="term__title">loadout check</span>
+            </div>
+            <div class="term__body"><span class="t-pass">PASS</span>  node [20.11.0]
+<span class="t-warn">WARN</span>  node_modules
+      run <span class="t-ink">npm ci</span>
+<span class="t-fail">FAIL</span>  DATABASE_URL
+      set in local <span class="t-ink">.env</span>
+
+2 passed, 1 failed, 1 warning</div>
+          </div>
+        </div>
+        <div class="fragment fade-left">
+          <div class="command-label">ordered remediation</div>
+          <div class="term">
+            <div class="term__bar">
+              <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
+              <span class="term__title">loadout doctor</span>
+            </div>
+            <div class="term__body"><span class="t-warn">1.</span> Install project dependencies
+   <span class="t-ink">npm ci</span>
+
+<span class="t-fail">2.</span> Configure environment variables
+   DATABASE_URL &middot; <span class="t-dim">.env.example</span>
+
+<span class="t-dim">Warnings are guidance; failures are blockers.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9. agent-readable JSON -->
+    <section>
+      <div class="eyebrow">$ loadout check --json</div>
+      <h2>Ready for an agent to reason over</h2>
+      <div class="json-layout">
+        <div class="term json-window">
+          <div class="term__bar">
+            <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
+            <span class="term__title">structured, secret-safe output</span>
+          </div>
+          <div class="term__body">{
+  <span class="fragment fade-up" data-fragment-index="1"><span class="json-key">"path"</span>: <span class="json-string">"/app"</span>,</span>
+  <span class="fragment fade-up" data-fragment-index="2"><span class="json-key">"results"</span>: [{</span>
+    <span class="fragment fade-up" data-fragment-index="3"><span class="json-key">"status"</span>: <span class="json-string">"fail"</span>,</span>
+    <span class="fragment fade-up" data-fragment-index="3"><span class="json-key">"kind"</span>: <span class="json-string">"environment"</span>,</span>
+    <span class="fragment fade-up" data-fragment-index="4"><span class="json-key">"name"</span>: <span class="json-string">"DATABASE_URL"</span>,</span>
+    <span class="fragment fade-up" data-fragment-index="4"><span class="json-key">"source"</span>: <span class="json-string">".env.example"</span></span>
+  <span class="fragment fade-up" data-fragment-index="2">}],</span>
+  <span class="fragment fade-up" data-fragment-index="5"><span class="json-key">"passed"</span>: <span class="json-number">2</span>, <span class="json-key">"failed"</span>: <span class="json-number">1</span>, <span class="json-key">"warnings"</span>: <span class="json-number">1</span></span>
+}</div>
+        </div>
+        <div class="agent-notes">
+          <div class="agent-note fragment fade-left" data-fragment-index="1"><strong>Scope</strong><br>Which checkout was inspected.</div>
+          <div class="agent-note fragment fade-left" data-fragment-index="3"><strong>Decision</strong><br>A stable status and kind, not prose to guess at.</div>
+          <div class="agent-note fragment fade-left" data-fragment-index="4"><strong>Evidence</strong><br>The exact requirement and repository source.</div>
+          <div class="agent-note fragment fade-left" data-fragment-index="5"><strong>Action gate</strong><br>Counts make a simple, safe next-step decision.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10. CI -->
     <section>
       <div class="eyebrow">$ ci</div>
       <h2>Built for pull requests</h2>
@@ -696,7 +860,7 @@ body {
       </ul>
     </section>
 
-    <!-- 9. Guardrails -->
+    <!-- 11. Guardrails -->
     <section>
       <div class="eyebrow">$ trust</div>
       <h2>Guardrails, not promises</h2>
@@ -716,20 +880,39 @@ body {
       </ul>
     </section>
 
-    <!-- 10. Architecture -->
+    <!-- 12. Architecture -->
     <section>
       <div class="eyebrow">$ tree src/</div>
       <h2>Under the hood</h2>
       <div class="pipeline">
-        <span class="step">discover</span>
-        <span class="arrow">&rarr;</span>
-        <span class="step">gather_results</span>
-        <span class="arrow">&rarr;</span>
-        <span class="step">evaluate</span>
-        <span class="arrow">&rarr;</span>
-        <span class="step">report</span>
+        <span class="step fragment fade-up">discover</span>
+        <span class="arrow fragment fade-up">&rarr;</span>
+        <span class="step fragment fade-up">gather_results</span>
+        <span class="arrow fragment fade-up">&rarr;</span>
+        <span class="step fragment fade-up">evaluate</span>
+        <span class="arrow fragment fade-up">&rarr;</span>
+        <span class="step fragment fade-up">report</span>
       </div>
-      <div class="modmap">
+      <div class="architecture-details">
+        <div class="card fragment fade-up">
+          <h4>1. Discover</h4>
+          <p>Walk repository metadata, skip generated directories, and find the real workspace root.</p>
+        </div>
+        <div class="card fragment fade-up">
+          <h4>2. Gather</h4>
+          <p>Combine detected requirements, local env keys, flags, and opt-in service targets. Keep the source.</p>
+        </div>
+        <div class="card fragment fade-up">
+          <h4>3. Evaluate</h4>
+          <p>Check commands, versions, env presence, dependency state, and optional TCP reachability.</p>
+        </div>
+        <div class="card fragment fade-up">
+          <h4>4. Report</h4>
+          <p>Render a human check, guided doctor, CI annotations, or JSON from one result model.</p>
+        </div>
+      </div>
+      <p class="module-caption fragment fade-up">Implementation modules</p>
+      <div class="modmap fragment fade-up">
         <span>model.rs</span><span>cli.rs</span><span>discover.rs</span>
         <span>dotenv.rs</span><span>connectivity.rs</span><span>evaluate.rs</span>
         <span>scripts.rs</span><span>ignore_file.rs</span><span>check.rs</span>
@@ -737,7 +920,7 @@ body {
       </div>
     </section>
 
-    <!-- 11. Engineering quality -->
+    <!-- 13. Engineering quality -->
     <section>
       <div class="eyebrow">$ cargo test</div>
       <h2>Held to its own standard</h2>
@@ -761,7 +944,7 @@ body {
       </div>
     </section>
 
-    <!-- 12. Closing -->
+    <!-- 14. Closing -->
     <section class="title-slide">
       <div class="eyebrow">$ curl | sh</div>
       <h2 style="font-size:2em">Try it on this repo</h2>
@@ -773,7 +956,7 @@ body {
         <span class="prompt">$</span>
         <span>loadout check</span>
       </div>
-      <p class="closing-line">loadout — know before you start.</p>
+      <p class="closing-line">loadout &mdash; know before you start.</p>
     </section>
 
   </div>
@@ -797,7 +980,7 @@ Reveal.initialize({
   progress: true,
   slideNumber: 'c/t',
   center: false,
-  transition: 'slide',
+  transition: 'none',
   transitionSpeed: 'fast',
   width: 1280,
   height: 720,
@@ -808,3 +991,5 @@ Reveal.initialize({
   touch: true
 });
 </script>
+</body>
+</html>
