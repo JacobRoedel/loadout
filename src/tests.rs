@@ -646,3 +646,32 @@ fn malformed_metadata_is_reported_with_its_source() {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn discovery_reads_devcontainer_nix_brewfile_and_actions_versions() {
+    let directory =
+        std::env::temp_dir().join(format!("loadout-signals-test-{}", std::process::id()));
+    fs::create_dir_all(directory.join(".github/workflows")).unwrap();
+    fs::write(
+        directory.join("devcontainer.json"),
+        "{\"image\": \"mcr.microsoft.com/devcontainers/rust\"}",
+    )
+    .unwrap();
+    fs::write(directory.join("flake.nix"), "{ outputs = _: {}; }").unwrap();
+    fs::write(directory.join("Brewfile"), "brew \"jq\"\n").unwrap();
+    fs::write(
+        directory.join(".github/workflows/ci.yml"),
+        "jobs:\n  test:\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 20.11.0\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n",
+    )
+    .unwrap();
+    let mut diagnostics = Vec::new();
+    let found = discover(&directory, &mut diagnostics);
+    let names: Vec<_> = found
+        .iter()
+        .map(|requirement| requirement.name.as_str())
+        .collect();
+    for name in ["docker", "devcontainer", "nix", "brew", "node", "python"] {
+        assert!(names.contains(&name), "missing {name} signal");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}

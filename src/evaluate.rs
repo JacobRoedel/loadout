@@ -180,6 +180,9 @@ pub(crate) fn installation_hint_for(os: &str, name: &str) -> Option<&'static str
         ("macos", "ruby") => Some("brew install ruby"),
         ("macos", "docker") => Some("brew install --cask docker"),
         ("macos", "terraform") => Some("brew install terraform"),
+        ("macos", "nix") => Some("sh <(curl -L https://nixos.org/nix/install)"),
+        ("macos", "devcontainer") => Some("npm install --global @devcontainers/cli"),
+        ("macos", "brew") => Some("https://brew.sh"),
         ("macos", "psql") => Some("brew install libpq"),
         ("macos", "redis-cli") => Some("brew install redis"),
         ("linux", "node" | "npm") => Some("sudo apt install nodejs npm"),
@@ -192,6 +195,9 @@ pub(crate) fn installation_hint_for(os: &str, name: &str) -> Option<&'static str
         ("linux", "ruby") => Some("sudo apt install ruby"),
         ("linux", "docker") => Some("sudo apt install docker.io"),
         ("linux", "terraform") => Some("sudo apt install terraform"),
+        ("linux", "nix") => Some("sh <(curl -L https://nixos.org/nix/install)"),
+        ("linux", "devcontainer") => Some("npm install --global @devcontainers/cli"),
+        ("linux", "brew") => Some("https://brew.sh"),
         ("linux", "psql") => Some("sudo apt install postgresql-client"),
         ("linux", "redis-cli") => Some("sudo apt install redis-tools"),
         ("windows", "node" | "npm") => Some("winget install OpenJS.NodeJS.LTS"),
@@ -202,6 +208,8 @@ pub(crate) fn installation_hint_for(os: &str, name: &str) -> Option<&'static str
         ("windows", "ruby") => Some("winget install RubyInstallerTeam.RubyWithDevKit"),
         ("windows", "docker") => Some("winget install Docker.DockerDesktop"),
         ("windows", "terraform") => Some("winget install Hashicorp.Terraform"),
+        ("windows", "nix") => Some("https://nixos.org/download/"),
+        ("windows", "devcontainer") => Some("npm install --global @devcontainers/cli"),
         _ => None,
     }
 }

@@ -60,6 +60,8 @@ Failures mean a required command, version, or environment variable is missing. W
 | Data tooling | `postgresql.conf`, `.psqlrc`, `redis.conf`, `.rediscli_history` | `psql`, `redis-cli` |
 | Environment | Root `.env*.example`, `.env*.sample`, `.env*.template` | Non-empty environment variables, required unless marked optional |
 | Git hooks | `.pre-commit-config.yaml`/`.yml` | `pre-commit`, and a warning to run `pre-commit install` when `.git/hooks/pre-commit` is missing |
+| Environment tooling | `devcontainer.json`, `flake.nix`, `Brewfile` | Docker + Dev Container CLI, Nix, or Homebrew |
+| CI runtime pins | `.github/workflows/*.yml`/`.yaml` | Node, Python, Ruby, and Java versions declared in setup-action inputs |
 
 ### Environment file awareness
 

@@ -55,6 +55,16 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
                 node_projects.push(dir);
                 found.extend(node_requirements(path, diagnostics));
             }
+            "devcontainer.json" => {
+                found.extend(devcontainer_requirements(path, diagnostics));
+            }
+            "flake.nix" => found.push(command("nix", None, display(path), true)),
+            "Brewfile" => found.push(command("brew", None, display(path), true)),
+            _ if path.components().any(|part| part.as_os_str() == ".github")
+                && (name.ends_with(".yml") || name.ends_with(".yaml")) =>
+            {
+                found.extend(github_actions_requirements(path, diagnostics));
+            }
             "pnpm-workspace.yaml" => {
                 validate_yaml(path, diagnostics);
                 node_workspace_roots.push(path.parent().unwrap().to_path_buf());
@@ -233,6 +243,67 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
     }
     found.extend(env_requirements(root, diagnostics));
     found
+}
+
+fn devcontainer_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> {
+    match fs::read_to_string(path).and_then(|contents| {
+        serde_json::from_str::<Value>(&contents).map_err(std::io::Error::other)
+    }) {
+        Ok(_) => vec![
+            command("docker", None, display(path), true),
+            command("devcontainer", None, display(path), true),
+        ],
+        Err(error) => {
+            diagnostics.push(parse_warning(path, "devcontainer.json", error));
+            Vec::new()
+        }
+    }
+}
+
+fn github_actions_requirements(path: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> {
+    let value = match fs::read_to_string(path).and_then(|contents| {
+        serde_yaml::from_str::<serde_yaml::Value>(&contents).map_err(std::io::Error::other)
+    }) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.push(parse_warning(path, "GitHub Actions YAML", error));
+            return Vec::new();
+        }
+    };
+    let mut versions = Vec::new();
+    collect_action_versions(&value, &mut versions);
+    versions
+        .into_iter()
+        .map(|(tool, version)| command(tool, Some(normalize_exact(&version)), display(path), true))
+        .collect()
+}
+
+fn collect_action_versions(value: &serde_yaml::Value, versions: &mut Vec<(&'static str, String)>) {
+    match value {
+        serde_yaml::Value::Mapping(values) => {
+            for (key, value) in values {
+                if let (Some(key), Some(version)) = (key.as_str(), value.as_str()) {
+                    let tool = match key {
+                        "node-version" => Some("node"),
+                        "python-version" => Some("python"),
+                        "ruby-version" => Some("ruby"),
+                        "java-version" => Some("java"),
+                        _ => None,
+                    };
+                    if let Some(tool) = tool {
+                        versions.push((tool, version.to_owned()));
+                    }
+                }
+                collect_action_versions(value, versions);
+            }
+        }
+        serde_yaml::Value::Sequence(values) => {
+            for value in values {
+                collect_action_versions(value, versions);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn parse_warning(path: &Path, format: &str, error: impl std::fmt::Display) -> ResultItem {
