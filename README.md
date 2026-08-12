@@ -55,6 +55,11 @@ Failures mean a required command, version, or environment variable is missing. W
 | Go | `go.mod` | Go and its declared minimum version |
 | Java | Maven `pom.xml`, Gradle files/wrapper | Java |
 | Ruby | `.ruby-version`, `Gemfile`, `Gemfile.lock` | Ruby, Bundler, and a `bundle install` warning when `.bundle/config` declares a local vendor path that's missing |
+| .NET | `global.json`, `*.sln`, `*.csproj`, `*.fsproj` | .NET SDK, including the SDK version from `global.json` |
+| PHP | `composer.json`, `composer.lock` | PHP and Composer |
+| Elixir | `mix.exs` | Elixir and Mix |
+| Dart / Flutter | `pubspec.yaml` | Dart SDK constraint; Flutter when a Flutter section is declared |
+| JVM | `pom.xml`, `build.gradle`, `build.gradle.kts`, `gradlew` | Java, including common Maven/Gradle Java-version declarations |
 | Universal version managers | asdf `.tool-versions`, mise `mise.toml`/`.mise.toml` | Version constraints for whichever pinned tools Loadout recognizes (Node, Python, Ruby, Go, Rust, Java, Terraform, Yarn, pnpm, Bun) |
 | Infrastructure | `Dockerfile`, Compose files, Terraform `.tf` files | Docker, Terraform |
 | Data tooling | `postgresql.conf`, `.psqlrc`, `redis.conf`, `.rediscli_history` | `psql`, `redis-cli` |
