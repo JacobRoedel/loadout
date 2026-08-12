@@ -56,12 +56,14 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
                 found.extend(node_requirements(path, diagnostics));
             }
             "pnpm-workspace.yaml" => {
+                validate_yaml(path, diagnostics);
                 node_workspace_roots.push(path.parent().unwrap().to_path_buf());
             }
             ".nvmrc" | ".node-version" => {
                 if let Ok(value) = fs::read_to_string(path) {
                     let version = value.trim().trim_start_matches('v');
                     if !version.is_empty() {
+                        validate_version_file(path, version, diagnostics);
                         found.push(command(
                             "node",
                             Some(node_version_constraint(version)),
@@ -72,10 +74,20 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
                 }
             }
             "rust-toolchain" | "rust-toolchain.toml" => {
+                if name == "rust-toolchain.toml" {
+                    validate_toml(path, diagnostics);
+                } else {
+                    validate_version_file(
+                        path,
+                        &fs::read_to_string(path).unwrap_or_default(),
+                        diagnostics,
+                    );
+                }
                 rust_projects.push(path.parent().unwrap().to_path_buf());
                 found.extend(rust_toolchain_requirements(path));
             }
             "Cargo.toml" => {
+                validate_toml(path, diagnostics);
                 let dir = path.parent().unwrap().to_path_buf();
                 if is_cargo_workspace_root(path) {
                     cargo_workspace_roots.push(dir.clone());
@@ -87,6 +99,7 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
                 if let Ok(value) = fs::read_to_string(path) {
                     let version = value.trim();
                     if !version.is_empty() {
+                        validate_version_file(path, version, diagnostics);
                         found.push(command(
                             "python",
                             Some(normalize_exact(version)),
@@ -97,6 +110,7 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
                 }
             }
             "pyproject.toml" => {
+                validate_toml(path, diagnostics);
                 let dir = path.parent().unwrap().to_path_buf();
                 if is_uv_workspace_root(path) {
                     python_workspace_roots.push(dir.clone());
@@ -111,9 +125,11 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
                 found.extend(tool_versions_requirements(path));
             }
             "mise.toml" | ".mise.toml" => {
+                validate_toml(path, diagnostics);
                 found.extend(mise_requirements(path));
             }
             ".pre-commit-config.yaml" | ".pre-commit-config.yml" => {
+                validate_yaml(path, diagnostics);
                 found.extend(pre_commit_requirements(path));
             }
             ".envrc" => {
@@ -126,6 +142,7 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
                 if let Ok(version) = fs::read_to_string(path) {
                     let version = version.trim();
                     if !version.is_empty() {
+                        validate_version_file(path, version, diagnostics);
                         found.push(command(
                             "ruby",
                             Some(normalize_exact(version)),
@@ -148,6 +165,9 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
             | "docker-compose.yaml"
             | "compose.yml"
             | "compose.yaml" => {
+                if name.ends_with(".yml") || name.ends_with(".yaml") {
+                    validate_yaml(path, diagnostics);
+                }
                 found.push(command("docker", None, display(path), true));
             }
             _ if name.starts_with("Dockerfile.") => {
@@ -211,8 +231,45 @@ pub(crate) fn discover(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Re
     for path in ruby_projects {
         ruby_dependency_warning(&mut found, &path);
     }
-    found.extend(env_requirements(root));
+    found.extend(env_requirements(root, diagnostics));
     found
+}
+
+fn parse_warning(path: &Path, format: &str, error: impl std::fmt::Display) -> ResultItem {
+    warn(
+        format,
+        display(path),
+        &format!("Could not parse {format}: {error}"),
+    )
+}
+
+fn validate_toml(path: &Path, diagnostics: &mut Vec<ResultItem>) {
+    match fs::read_to_string(path).and_then(|contents| {
+        toml::from_str::<toml::Value>(&contents).map_err(std::io::Error::other)
+    }) {
+        Ok(_) => {}
+        Err(error) => diagnostics.push(parse_warning(path, "TOML", error)),
+    }
+}
+
+fn validate_yaml(path: &Path, diagnostics: &mut Vec<ResultItem>) {
+    match fs::read_to_string(path).and_then(|contents| {
+        serde_yaml::from_str::<serde_yaml::Value>(&contents).map_err(std::io::Error::other)
+    }) {
+        Ok(_) => {}
+        Err(error) => diagnostics.push(parse_warning(path, "YAML", error)),
+    }
+}
+
+fn validate_version_file(path: &Path, version: &str, diagnostics: &mut Vec<ResultItem>) {
+    let version = version.trim().trim_start_matches('v');
+    if version.is_empty() || !version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        diagnostics.push(warn(
+            "version file",
+            display(path),
+            "Could not interpret a version; expected a version beginning with a number",
+        ));
+    }
 }
 
 /// True when `path` sits under one of `roots` but is not a root itself,

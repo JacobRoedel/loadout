@@ -4,14 +4,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::model::{Kind, Requirement, display};
+use crate::model::{Kind, Requirement, ResultItem, display, warn};
 
 /// Discovers required (and, where the file says so, optional) environment
 /// variables from every `.env*.example`/`.env*.sample`/`.env*.template` file
 /// at the repository root—covering not just `.env.example` but framework
 /// and platform variants like `.env.development.example` or
 /// `.env.local.example`.
-pub(crate) fn env_requirements(root: &Path) -> Vec<Requirement> {
+pub(crate) fn env_requirements(root: &Path, diagnostics: &mut Vec<ResultItem>) -> Vec<Requirement> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
     };
@@ -24,7 +24,33 @@ pub(crate) fn env_requirements(root: &Path) -> Vec<Requirement> {
     example_files.sort();
     example_files
         .iter()
-        .flat_map(|path| parse_env_example(&fs::read_to_string(path).unwrap_or_default(), path))
+        .flat_map(|path| match fs::read_to_string(path) {
+            Ok(contents) => {
+                for (line, raw) in contents.lines().enumerate() {
+                    let trimmed = raw.trim();
+                    if !trimmed.is_empty()
+                        && !trimmed.starts_with('#')
+                        && !trimmed.starts_with("export ")
+                        && !trimmed.contains('=')
+                    {
+                        diagnostics.push(warn(
+                            ".env",
+                            display(path),
+                            &format!("Could not parse .env assignment at line {}", line + 1),
+                        ));
+                    }
+                }
+                parse_env_example(&contents, path)
+            }
+            Err(error) => {
+                diagnostics.push(warn(
+                    ".env",
+                    display(path),
+                    &format!("Could not read .env file: {error}"),
+                ));
+                Vec::new()
+            }
+        })
         .collect()
 }
 
