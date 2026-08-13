@@ -89,7 +89,7 @@ body {
 
 .reveal {
   font-family: var(--sans);
-  font-size: 30px;
+  font-size: 34px;
   font-weight: 400;
   color: var(--ink);
 }
@@ -219,7 +219,7 @@ body {
 }
 
 .lede {
-  font-size: 0.66em;
+  font-size: 0.72em;
   color: var(--ink-dim);
   max-width: 30ch;
 }
@@ -279,7 +279,7 @@ body {
   gap: 0.85em;
   margin: 1.1em 0 0;
   padding: 0;
-  font-size: 0.6em;
+  font-size: 0.72em;
 }
 .statuslist li {
   display: grid;
@@ -349,8 +349,8 @@ body {
 .term__body {
   padding: 1.1em 1.3em 1.3em;
   font-family: var(--mono);
-  font-size: 0.5em;
-  line-height: 1.75;
+  font-size: 0.67em;
+  line-height: 1.68;
   white-space: pre-wrap;
   color: var(--ink-dim);
 }
@@ -400,13 +400,13 @@ body {
 }
 .card h4 {
   font-family: var(--mono);
-  font-size: 0.72em;
+  font-size: 0.78em;
   margin: 0.3em 0 0.4em;
   color: var(--accent);
   font-weight: 700;
 }
 .card p {
-  font-size: 0.52em;
+  font-size: 0.64em;
   color: var(--ink-dim);
   margin: 0;
   line-height: 1.6;
@@ -421,7 +421,7 @@ body {
 }
 .tagcloud span {
   font-family: var(--mono);
-  font-size: 0.36em;
+  font-size: 0.48em;
   padding: 0.45em 0.7em;
   border-radius: 7px;
   background: var(--surface);
@@ -456,7 +456,7 @@ body {
   flex-wrap: wrap;
   margin-top: 1.3em;
   font-family: var(--mono);
-  font-size: 0.5em;
+  font-size: 0.62em;
 }
 .pipeline .step {
   padding: 0.7em 1em;
@@ -500,7 +500,7 @@ body {
   letter-spacing: -0.02em;
 }
 .title-slide .lede {
-  font-size: 0.72em;
+  font-size: 0.8em;
   max-width: 24ch;
 }
 .cursor {
@@ -570,7 +570,7 @@ body {
   margin-top: 0.8em;
 }
 .json-window .term__body {
-  font-size: 0.42em;
+  font-size: 0.55em;
   line-height: 1.64;
   color: var(--ink-dim);
 }
@@ -585,7 +585,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.7em;
-  font-size: 0.52em;
+  font-size: 0.64em;
 }
 .agent-note {
   border-left: 2px solid var(--line);
@@ -610,7 +610,7 @@ body {
   font-size: 0.55em;
 }
 .architecture-details .card p {
-  font-size: 0.4em;
+  font-size: 0.55em;
   line-height: 1.45;
 }
 .module-caption {
@@ -620,6 +620,54 @@ body {
   color: var(--ink-faint);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+/* One slide, four progressive terminal states: the demo reads as a story,
+   without making the audience read a dense transcript. */
+.demo-steps {
+  display: flex;
+  gap: 0.6em;
+  margin: 0.9em 0;
+  font-family: var(--mono);
+  font-size: 0.52em;
+  color: var(--ink-faint);
+}
+.demo-steps span {
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 0.35em;
+}
+.demo-steps .fragment.visible {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.demo-window {
+  max-width: 31em;
+}
+.demo-window .term__body {
+  min-height: 9em;
+  font-size: 0.62em;
+  line-height: 1.72;
+  white-space: normal;
+  position: relative;
+}
+.demo-window .fragment.current-visible {
+  display: none;
+}
+.demo-window .fragment.current-visible.current-fragment {
+  display: block;
+}
+.demo-window .term__body > .fragment {
+  white-space: pre-wrap;
+  position: absolute;
+  top: 1.1em;
+  right: 1.3em;
+  left: 1.3em;
+}
+.demo-caption {
+  margin-top: 0.8em;
+  font-size: 0.68em;
+  color: var(--ink-dim);
+  max-width: 46ch;
 }
 
 @media (max-width: 900px) {
@@ -640,176 +688,84 @@ body {
     <section class="title-slide">
       <div class="eyebrow">~/loadout $ ./run</div>
       <h1>loadout<span class="cursor"></span></h1>
-      <p class="lede">Know your dev environment is ready &mdash; before you start.</p>
+      <p class="lede">Know your dev environment is ready before you start.</p>
       <div class="chips" style="margin-top:2em">
         <span class="chip chip--tag">local</span>
         <span class="chip chip--tag">read&#8209;only</span>
-        <span class="chip chip--tag">single binary</span>
-        <span class="chip chip--tag">Rust</span>
+        <span class="chip chip--tag">one command</span>
       </div>
     </section>
 
-    <!-- 2. The problem -->
+    <!-- 2. The problem and promise -->
     <section>
       <div class="eyebrow">$ why</div>
-      <h2>&ldquo;Works on my machine&rdquo; is not a diagnosis</h2>
+      <h2>Turn &ldquo;it doesn&rsquo;t work&rdquo;<br>into a clear next step.</h2>
       <ul class="statuslist">
         <li>
-          <span class="tag tag--fail">FAIL</span>
-          <span class="desc">A new teammate loses their first day to a missing runtime, the wrong Node version, or an unset <strong>DATABASE_URL</strong> — discovered one command at a time.</span>
+          <span class="tag tag--fail">BEFORE</span>
+          <span class="desc">Missing runtimes, dependencies, and environment variables are discovered one failed command at a time.</span>
         </li>
         <li>
-          <span class="tag tag--warn">WARN</span>
-          <span class="desc">CI catches environment drift only after it's already cost a push and a red build — an expensive place to learn your local setup is stale.</span>
+          <span class="tag tag--pass">AFTER</span>
+          <span class="desc">loadout reads the repository&rsquo;s existing metadata and reports what is ready, missing, or needs attention.</span>
         </li>
         <li>
-          <span class="tag tag--fail">FAIL</span>
-          <span class="desc">Docker, devcontainers, and version managers prevent drift <em>going forward</em> — none of them tell you whether <strong>today's</strong> checkout is actually ready.</span>
+          <span class="tag tag--warn">SAFETY</span>
+          <span class="desc">It never installs software or edits configuration. <code>--services</code> is the only opt-in network check.</span>
         </li>
       </ul>
     </section>
 
-    <!-- 3. What it is -->
+    <!-- 3. What it reads -->
     <section>
       <div class="eyebrow">$ what</div>
-      <h2>A read-only readiness check</h2>
-      <p class="lede" style="max-width:38ch">loadout reads the metadata your repository already has and reports pass, fail, or warn. It never acts on your behalf.</p>
-      <ul class="statuslist" style="margin-top:1.4em">
-        <li>
-          <span class="tag tag--pass">READS</span>
-          <span class="desc"><strong>package.json</strong>, <strong>Cargo.toml</strong>, <strong>pyproject.toml</strong>, lockfiles, <strong>.env.example</strong> variants — metadata that's already in the repo.</span>
-        </li>
-        <li>
-          <span class="tag tag--fail">NEVER</span>
-          <span class="desc">Installs software, writes configuration files, or runs a package manager on your behalf.</span>
-        </li>
-        <li>
-          <span class="tag tag--warn">EXCEPT</span>
-          <span class="desc"><code>--services</code> opts into real connectivity checks. Every other code path is fully offline.</span>
-        </li>
-      </ul>
+      <h2>It uses the repo as the source of truth.</h2>
+      <div class="grid grid--3">
+        <div class="card"><h4>Requirements</h4><p><code>package.json</code>, <code>Cargo.toml</code>, <code>pyproject.toml</code>, version files, and lockfiles.</p></div>
+        <div class="card"><h4>Configuration</h4><p><code>.env.example</code> variants reveal required keys without ever reading or printing their values.</p></div>
+        <div class="card"><h4>Workspace shape</h4><p>Workspaces and monorepos are recognized at the root, while generated directories are skipped.</p></div>
+      </div>
     </section>
 
-    <!-- 4. Demo -->
+    <!-- 4. Demo: progressive, start to finish -->
     <section>
-      <div class="eyebrow">$ loadout check</div>
-      <h2>What it looks like</h2>
-      <div class="term">
+      <div class="eyebrow">$ demo</div>
+      <h2>From fresh checkout to ready.</h2>
+      <div class="demo-steps">
+        <span>1. inspect</span>
+        <span class="fragment fade-up" data-fragment-index="1">2. diagnose</span>
+        <span class="fragment fade-up" data-fragment-index="2">3. fix</span>
+        <span class="fragment fade-up" data-fragment-index="3">4. confirm</span>
+      </div>
+      <div class="term demo-window">
         <div class="term__bar">
           <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
-          <span class="term__title">loadout check</span>
+          <span class="term__title">local terminal</span>
         </div>
-        <div class="term__body"><span class="t-pass">PASS</span>  node [20.11.0]              <span class="t-dim">(package.json)</span>
-      <span class="t-ink">Version satisfies requirement</span>
-<span class="t-pass">PASS</span>  rustc [1.90.0]              <span class="t-dim">(Cargo.toml)</span>
-      <span class="t-ink">Version satisfies requirement</span>
-<span class="t-warn">WARN</span>  node_modules                <span class="t-dim">(package.json)</span>
-      <span class="t-ink">Node dependencies do not appear to be installed; run `npm ci`</span>
-<span class="t-fail">FAIL</span>  DATABASE_URL                <span class="t-dim">(.env.example)</span>
-      <span class="t-ink">Set this environment variable in your shell or local .env file</span>
-
-2 passed, 1 failed, 1 warning</div>
-      </div>
-    </section>
-
-    <!-- 5. Ecosystem coverage -->
-    <section>
-      <div class="eyebrow">$ discover</div>
-      <h2>One binary, every stack</h2>
-      <p class="lede" style="max-width:42ch">Version constraints, package managers, dependency state, and required env vars — detected automatically per ecosystem.</p>
-      <div class="tagcloud">
-        <span>Node</span><span>Rust</span><span>Python</span><span>Go</span>
-        <span>Java</span><span>Ruby</span><span>asdf/mise</span>
-        <span>Docker</span><span>Terraform</span><span>Postgres/Redis</span>
-        <span>.env files</span><span>pre-commit</span>
-      </div>
-      <p class="lede" style="margin-top:1.6em;max-width:46ch">Workspace-aware: npm, pnpm, Yarn, Bun, Cargo and uv workspaces, plus Turborepo — checks run once at the true root, not per package.</p>
-    </section>
-
-    <!-- 6. Three commands -->
-    <section>
-      <div class="eyebrow">$ loadout --help</div>
-      <h2>Three commands</h2>
-      <div class="grid grid--3">
-        <div class="card">
-          <div class="card__num">01</div>
-          <h4>check</h4>
-          <p>The core command. Discovers requirements, evaluates them against this machine, reports pass / fail / warn.</p>
-        </div>
-        <div class="card">
-          <div class="card__num">02</div>
-          <h4>doctor</h4>
-          <p>Same checks — blockers grouped into ordered remediation steps, each with a link to the tool's install docs.</p>
-        </div>
-        <div class="card">
-          <div class="card__num">03</div>
-          <h4>init</h4>
-          <p>A discovery aid, not a setup command. Lists what loadout detects and the scripts you can already run. Writes nothing.</p>
+        <div class="term__body">
+          <div class="fragment fade-out" data-fragment-index="1"><span class="t-dim">$</span> loadout check
+<span class="t-pass">PASS</span>  node [20.11.0]
+<span class="t-warn">WARN</span>  node_modules  <span class="t-dim">run npm ci</span>
+<span class="t-fail">FAIL</span>  DATABASE_URL  <span class="t-dim">set in local .env</span></div>
+          <div class="fragment current-visible" data-fragment-index="1"><span class="t-dim">$</span> loadout doctor
+<span class="t-warn">1.</span> <span class="t-ink">npm ci</span>
+<span class="t-fail">2.</span> Set DATABASE_URL <span class="t-dim">(.env.example)</span></div>
+          <div class="fragment current-visible" data-fragment-index="2"><span class="t-dim">$</span> npm ci
+<span class="t-dim">$</span> <span class="t-ink">set DATABASE_URL in local .env</span>
+<span class="t-dim">You choose and run the fix.</span></div>
+          <div class="fragment current-visible" data-fragment-index="3"><span class="t-dim">$</span> loadout check
+<span class="t-pass">PASS</span>  node [20.11.0]
+<span class="t-pass">PASS</span>  node_modules
+<span class="t-pass">PASS</span>  DATABASE_URL
+<span class="t-pass">3 passed, ready to work.</span></div>
         </div>
       </div>
     </section>
 
-    <!-- 7. doctor spotlight -->
-    <section>
-      <div class="eyebrow">$ loadout doctor</div>
-      <h2>Ordered, not overwhelming</h2>
-      <p class="lede" style="max-width:40ch">Blockers are grouped in the order a developer would actually clear them.</p>
-      <div class="pipeline" style="margin-top:1.8em">
-        <span class="step fragment fade-up">install tools</span>
-        <span class="arrow fragment fade-up">&rarr;</span>
-        <span class="step fragment fade-up">install dependencies</span>
-        <span class="arrow fragment fade-up">&rarr;</span>
-        <span class="step fragment fade-up">configure env vars</span>
-        <span class="arrow fragment fade-up">&rarr;</span>
-        <span class="step fragment fade-up">check services</span>
-      </div>
-      <p class="lede" style="margin-top:1.8em;max-width:44ch"><code>--open-docs</code> opens each missing tool's install page. loadout only reports findings — the fix is always yours to run.</p>
-    </section>
-
-    <!-- 8. check and doctor relationship -->
-    <section>
-      <div class="eyebrow">$ check / doctor</div>
-      <h2>Check tells you what. Doctor tells you what next.</h2>
-      <div class="command-compare">
-        <div>
-          <div class="command-label">factual report</div>
-          <div class="term">
-            <div class="term__bar">
-              <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
-              <span class="term__title">loadout check</span>
-            </div>
-            <div class="term__body"><span class="t-pass">PASS</span>  node [20.11.0]
-<span class="t-warn">WARN</span>  node_modules
-      run <span class="t-ink">npm ci</span>
-<span class="t-fail">FAIL</span>  DATABASE_URL
-      set in local <span class="t-ink">.env</span>
-
-2 passed, 1 failed, 1 warning</div>
-          </div>
-        </div>
-        <div class="fragment fade-left">
-          <div class="command-label">ordered remediation</div>
-          <div class="term">
-            <div class="term__bar">
-              <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
-              <span class="term__title">loadout doctor</span>
-            </div>
-            <div class="term__body"><span class="t-warn">1.</span> Install project dependencies
-   <span class="t-ink">npm ci</span>
-
-<span class="t-fail">2.</span> Configure environment variables
-   DATABASE_URL &middot; <span class="t-dim">.env.example</span>
-
-<span class="t-dim">Warnings are guidance; failures are blockers.</span></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 9. agent-readable JSON -->
+    <!-- 5. Agent-readable output -->
     <section>
       <div class="eyebrow">$ loadout check --json</div>
-      <h2>Ready for an agent to reason over</h2>
+      <h2>Humans see a diagnosis.<br>Agents get a contract.</h2>
       <div class="json-layout">
         <div class="term json-window">
           <div class="term__bar">
@@ -836,51 +792,18 @@ body {
       </div>
     </section>
 
-    <!-- 10. CI -->
+    <!-- 6. One result model, multiple consumers -->
     <section>
-      <div class="eyebrow">$ ci</div>
-      <h2>Built for pull requests</h2>
-      <ul class="statuslist">
-        <li>
-          <span class="tag tag--pass">SCOPE</span>
-          <span class="desc"><code>--changed &lt;ref&gt;</code> checks only requirements whose source file changed against the PR's base branch.</span>
-        </li>
-        <li>
-          <span class="tag tag--pass">ANNOTATE</span>
-          <span class="desc"><code>--annotate</code> emits GitHub Actions <code>::error</code> / <code>::warning</code> lines, pointing at the exact file.</span>
-        </li>
-        <li>
-          <span class="tag tag--pass">ACTION</span>
-          <span class="desc">A reusable composite action — <code>uses: JacobRoedel/loadout@main</code> — no local Rust install required.</span>
-        </li>
-        <li>
-          <span class="tag tag--pass">GATE</span>
-          <span class="desc">Exit codes <code>0 / 1 / 2</code> — pass, blocked, or bad invocation. A natural CI gate, nothing bespoke to parse.</span>
-        </li>
-      </ul>
+      <div class="eyebrow">$ same facts, right format</div>
+      <h2>One check. Three useful views.</h2>
+      <div class="grid grid--3">
+        <div class="card"><h4>Developer</h4><p><code>check</code> reports factual PASS, WARN, and FAIL results in the terminal.</p></div>
+        <div class="card"><h4>Agent</h4><p><code>--json</code> carries stable status, source, and counts for safe next-step decisions.</p></div>
+        <div class="card"><h4>CI</h4><p><code>--annotate</code> and exit codes make the same findings visible in a pull request.</p></div>
+      </div>
     </section>
 
-    <!-- 11. Guardrails -->
-    <section>
-      <div class="eyebrow">$ trust</div>
-      <h2>Guardrails, not promises</h2>
-      <ul class="statuslist">
-        <li>
-          <span class="tag tag--pass">SCOPED</span>
-          <span class="desc"><code>--services</code> is the <em>only</em> code path that touches the network — a 2&nbsp;second TCP dial, opt-in every time.</span>
-        </li>
-        <li>
-          <span class="tag tag--pass">SILENT</span>
-          <span class="desc">Credential values and full connection strings are never printed or written to JSON output — only host and port.</span>
-        </li>
-        <li>
-          <span class="tag tag--pass">DURABLE</span>
-          <span class="desc"><code>.loadoutignore</code> — a small, reviewable, repository-local list of intentional exceptions. Skips are counted, never hidden.</span>
-        </li>
-      </ul>
-    </section>
-
-    <!-- 12. Architecture -->
+    <!-- 7. Architecture -->
     <section>
       <div class="eyebrow">$ tree src/</div>
       <h2>Under the hood</h2>
@@ -911,52 +834,14 @@ body {
           <p>Render a human check, guided doctor, CI annotations, or JSON from one result model.</p>
         </div>
       </div>
-      <p class="module-caption fragment fade-up">Implementation modules</p>
-      <div class="modmap fragment fade-up">
-        <span>model.rs</span><span>cli.rs</span><span>discover.rs</span>
-        <span>dotenv.rs</span><span>connectivity.rs</span><span>evaluate.rs</span>
-        <span>scripts.rs</span><span>ignore_file.rs</span><span>check.rs</span>
-        <span>doctor.rs</span><span>init.rs</span>
-      </div>
+      <p class="module-caption fragment fade-up">One result model keeps every output consistent.</p>
     </section>
 
-    <!-- 13. Engineering quality -->
-    <section>
-      <div class="eyebrow">$ cargo test</div>
-      <h2>Held to its own standard</h2>
-      <div class="grid grid--2">
-        <div class="card">
-          <h4>Every PR, every push</h4>
-          <p><code>cargo fmt --check</code> &middot; <code>cargo test --locked</code> &middot; <code>cargo clippy -D warnings</code> &middot; <code>cargo build --release --locked</code></p>
-        </div>
-        <div class="card">
-          <h4>37 unit tests</h4>
-          <p>Covering version matching, workspace detection, ignore-file scoping, and every credential-safety guarantee.</p>
-        </div>
-        <div class="card">
-          <h4>MIT licensed</h4>
-          <p>Source-available, free to vendor into any CI pipeline.</p>
-        </div>
-        <div class="card">
-          <h4>Zero-install trial</h4>
-          <p>Prebuilt release binaries and a one-line <code>install.sh</code> for Linux and macOS.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- 14. Closing -->
+    <!-- 8. Closing -->
     <section class="title-slide">
-      <div class="eyebrow">$ curl | sh</div>
-      <h2 style="font-size:2em">Try it on this repo</h2>
-      <div class="install">
-        <span class="prompt">$</span>
-        <span>curl -fsSL raw.githubusercontent.com/JacobRoedel/loadout/main/install.sh | sh</span>
-      </div>
-      <div class="install">
-        <span class="prompt">$</span>
-        <span>loadout check</span>
-      </div>
-      <p class="closing-line">loadout &mdash; know before you start.</p>
+      <div class="eyebrow">$ conclusion</div>
+      <h2 style="font-size:2.1em">A faster answer<br>to &ldquo;am I ready?&rdquo;</h2>
+      <p class="closing-line">loadout reads the repo, checks the machine, and leaves every fix in your hands.</p>
     </section>
 
   </div>
