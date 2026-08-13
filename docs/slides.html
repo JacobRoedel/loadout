@@ -626,7 +626,7 @@ body {
    without making the audience read a dense transcript. */
 .demo-steps {
   display: flex;
-  gap: 0.6em;
+  gap: 1.15em;
   margin: 0.9em 0;
   font-family: var(--mono);
   font-size: 0.52em;
@@ -644,7 +644,8 @@ body {
   max-width: 31em;
 }
 .demo-window .term__body {
-  min-height: 9em;
+  height: 13.5em;
+  min-height: 13.5em;
   font-size: 0.62em;
   line-height: 1.72;
   white-space: normal;
@@ -663,13 +664,6 @@ body {
   right: 1.3em;
   left: 1.3em;
 }
-.demo-caption {
-  margin-top: 0.8em;
-  font-size: 0.68em;
-  color: var(--ink-dim);
-  max-width: 46ch;
-}
-
 @media (max-width: 900px) {
   .grid--2,
   .grid--3,
@@ -837,7 +831,22 @@ body {
       <p class="module-caption fragment fade-up">One result model keeps every output consistent.</p>
     </section>
 
-    <!-- 8. Closing -->
+    <!-- 8. Install -->
+    <section class="title-slide">
+      <div class="eyebrow">$ install</div>
+      <h2 style="font-size:2em">Try the source build today.</h2>
+      <div class="install">
+        <span class="prompt">$</span>
+        <span>cargo install --git https://github.com/JacobRoedel/loadout</span>
+      </div>
+      <div class="install">
+        <span class="prompt">$</span>
+        <span>loadout check</span>
+      </div>
+      <p class="closing-line">The public release installer returns when releases are enabled.</p>
+    </section>
+
+    <!-- 9. Closing -->
     <section class="title-slide">
       <div class="eyebrow">$ conclusion</div>
       <h2 style="font-size:2.1em">A faster answer<br>to &ldquo;am I ready?&rdquo;</h2>
