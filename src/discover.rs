@@ -501,6 +501,9 @@ pub(crate) fn node_dependency_warning(
     project: &Path,
     is_workspace_root: bool,
 ) {
+    if !is_workspace_root && !has_declared_node_dependencies(project) {
+        return;
+    }
     let install = if project.join("pnpm-lock.yaml").exists() {
         "pnpm install --frozen-lockfile"
     } else if project.join("yarn.lock").exists() {
@@ -530,6 +533,24 @@ pub(crate) fn node_dependency_warning(
         ".pnp.cjs",
         &format!("Node dependencies do not appear to be installed; run `{install}`{location}"),
     );
+}
+
+fn has_declared_node_dependencies(project: &Path) -> bool {
+    fs::read_to_string(project.join("package.json"))
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Value>(&contents).ok())
+        .map(|package| {
+            ["dependencies", "devDependencies", "optionalDependencies"]
+                .iter()
+                .any(|key| {
+                    package
+                        .get(*key)
+                        .and_then(Value::as_object)
+                        .is_some_and(|dependencies| !dependencies.is_empty())
+                })
+        })
+        // Preserve the existing warning if the manifest cannot be read or parsed.
+        .unwrap_or(true)
 }
 
 /// Recommends the install command that matches whichever Python tool the

@@ -191,6 +191,32 @@ fn workspace_root_install_message_names_the_root() {
     fs::remove_dir_all(directory).unwrap();
 }
 #[test]
+fn node_projects_without_declared_dependencies_skip_install_warning() {
+    let directory = std::env::temp_dir().join(format!(
+        "loadout-empty-node-project-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("package.json"),
+        r#"{"name":"empty-project","private":true}"#,
+    )
+    .unwrap();
+
+    let mut found = Vec::new();
+    node_dependency_warning(&mut found, &directory, false);
+    assert!(found.is_empty());
+
+    fs::write(
+        directory.join("package.json"),
+        r#"{"devDependencies":{"typescript":"^5.0.0"}}"#,
+    )
+    .unwrap();
+    node_dependency_warning(&mut found, &directory, false);
+    assert_eq!(found.len(), 1);
+    fs::remove_dir_all(directory).unwrap();
+}
+#[test]
 fn doctor_groups_blockers_in_remediation_order() {
     let results = vec![
         ResultItem {
